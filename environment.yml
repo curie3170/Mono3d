@@ -1,0 +1,17 @@
+name: mono3d
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.6
+  - numpy
+  - tqdm
+  - cudatoolkit=10.1
+  - pytorch=1.4.0
+  - torchvision=0.5.0
+  - matplotlib
+  - termcolor
+  - opencv
+  - configargparse
+  - pip:
+    - scipy

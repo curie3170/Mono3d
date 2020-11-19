@@ -110,3 +110,5 @@ venv.bak/
 
 # os specifics
 .DS_Store
+
+# project specifics
