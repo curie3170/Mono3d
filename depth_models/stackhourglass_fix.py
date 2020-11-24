@@ -52,7 +52,6 @@ class hourglass(nn.Module):
             post = F.relu(self.conv5(out) + pre, inplace=True)
 
         out = self.conv6(post)  # in:1/8 out:1/4
-
         return out, pre, post
 
 
@@ -160,7 +159,6 @@ class PSMNet(nn.Module):
                 cost[:, refimg_fea.size()[1]:, i, :, :] = targetimg_fea
         cost = cost.contiguous()
         cost = self.warp(cost, calib)
-
         cost0 = self.dres0(cost)
         cost0 = self.dres1(cost0) + cost0
 
@@ -178,7 +176,6 @@ class PSMNet(nn.Module):
         cost3 = self.classif3(out3) + cost2
         if out_cost_volume:
             return cost3
-
         if self.training:
             cost1 = F.upsample(cost1, [self.maxdepth, left.size()[
                                2], left.size()[3]], mode='trilinear')
@@ -197,6 +194,7 @@ class PSMNet(nn.Module):
                            2], left.size()[3]], mode='trilinear')
         cost3 = torch.squeeze(cost3, 1)
         pred3 = F.softmax(cost3, dim=1)
+
         # For your information: This formulation 'softmax(c)' learned "similarity"
         # while 'softmax(-c)' learned 'matching cost' as mentioned in the paper.
         # However, 'c' or '-c' do not affect the performance because feature-based cost volume provided flexibility.

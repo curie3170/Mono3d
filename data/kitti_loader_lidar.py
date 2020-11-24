@@ -143,14 +143,14 @@ class KittiDataset_Fusion_stereo(Dataset):
                 reg_label = torch.flip(reg_label, [2])
                 reg_label[0, :, :] *= -1  # cos(pi - theta)
                 reg_label[2, :, :] *= -1  # dx
-
+        color = F.interpolate(imgL.unsqueeze(dim=0), size=(192,640)).squeeze(0)
         if self.only_feature:
-            return {'imgL': imgL, 'imgR': imgR, 'f': f, 'depth_map': depth_map,
+            return {'color': color,'imgL': imgL, 'imgR': imgR, 'f': f, 'depth_map': depth_map,
                     'idx': data_idx,
                     'image': image, 'img_index': img_index, 'bev_index': bev_index, 'h_shift':h_shift,
                     'ori_shape': [H, W], 'flip': flip, 'a_shift': shift}
         else:
-            return {'imgL': imgL, 'imgR': imgR, 'f': f,  'depth_map': depth_map,
+            return {'color': color,'imgL': imgL, 'imgR': imgR, 'f': f,  'depth_map': depth_map,
                     'cl': class_label, 'rl': reg_label, 'idx': data_idx,
                     'image': image, 'img_index': img_index, 'bev_index': bev_index, 'h_shift':h_shift,
                     'ori_shape': [H, W], 'flip': flip, 'a_shift': shift}

@@ -112,3 +112,14 @@ venv.bak/
 .DS_Store
 
 # project specifics
+saves/
+pretrained_weights/
+evaluation/kitti_eval/evaluate_object_3d_offline01
+evaluation/kitti_eval/evaluate_object_3d_offline02
+evaluation/kitti_eval/evaluate_object_3d_offline03
+evaluation/kitti_eval/evaluate_object_3d_offline04
+evaluation/kitti_eval/evaluate_object_3d_offline05
+evaluation/kitti_eval/evaluate_object_3d_offline06
+evaluation/kitti_eval/evaluate_object_3d_offline07
+evaluation/kitti_eval/evaluate_object_3d_offline08
+evaluation/kitti_eval/evaluate_object_3d_offline09

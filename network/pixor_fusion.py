@@ -132,6 +132,7 @@ class PixorNet_Fusion(nn.Module):
             img_list.append(img_mask)
 
         x3_img = torch.zeros((x3.shape[0], res4x.shape[1], x3.shape[2], x3.shape[3]), device='cuda')
+
         img_down = img_down * 4
         # TODO: remove forloop in the batch dim
         for i in range(x3.shape[0]):
@@ -158,9 +159,7 @@ class PixorNet_Fusion(nn.Module):
             x5_img[i, :, bev_list[i][:,1]//bev_down, bev_list[i][:,0]//bev_down] = res16x[i, :, img_list[i][:,1]//img_down, img_list[i][:,0]//img_down]
 
         x5 = torch.cat([x5, x5_img], dim=1)
-
         x6 = self.bridge(x5)
-
         x7 = self.up1(x6, x4)
         x8 = self.up2(x7, x3)
         x9 = self.shared_header(x8)
@@ -360,10 +359,10 @@ class ResNet(nn.Module):
         x1 = self.layer1(x)
         x2 = self.layer2(x1)
         x3 = self.layer3(x2)
+
         x1 = self.layer1_1x1(x1)
         x2 = self.layer2_1x1(x2)
         x3 = self.layer3_1x1(x3)
-
 
         return x1,x2,x3
 
