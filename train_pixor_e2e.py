@@ -27,8 +27,18 @@ from utils.avg_meters import AverageMeter
 
 from kitti_process_detection import gen_feature_diffused_tensor, get_3D_global_grid_extended
 
-from depth_models.stackhourglass_fix import PSMNet
+#from depth_models.stackhourglass_fix import PSMNet
 import utils_func
+
+#crkim
+MONO_SCALE_FACTOR = 31.286
+MIN_DEPTH = 1e-3
+MAX_DEPTH = 80
+from monodepth.layers import disp_to_depth
+from monodepth.utils import readlines
+from monodepth.options import MonodepthOptions
+from monodepth import datasets
+from monodepth import networks
 
 def symlink_force(target, link_name):
     try:
@@ -253,7 +263,7 @@ def get_eval_dataset(args):
     eval_loader = DataLoader(
         eval_data, batch_size=args.batch_size, shuffle=False, num_workers=4)
     return eval_data, eval_loader
-
+'''
 def forward_depth_model(imgL, imgR, depth, calib, metric_log, model, mode='TRAIN'):
     # model.train()
     calib = calib.float()
@@ -280,6 +290,24 @@ def forward_depth_model(imgL, imgR, depth, calib, metric_log, model, mode='TRAIN
 
     metric_log.calculate(depth, output3, loss=loss.item())
     return loss, output3
+'''
+def forward_monodepth_model(imgL, color, depth, calib, metric_log, depth_model, encoder_model, mode='TRAIN'):
+    calib = calib.float()
+
+    # ---------
+    mask = (depth >= 1) * (depth <= 80)
+    mask.detach_()
+    # ----
+    output = depth_model(encoder_model(color))
+    pred_disp, _ = disp_to_depth(output[("disp", 0)], MIN_DEPTH, MAX_DEPTH)
+    pred_disp = F.interpolate(pred_disp, size=(imgL.shape[2], imgL.shape[3])).squeeze(1)
+    pred_depth = 1 / pred_disp
+    pred_depth *= MONO_SCALE_FACTOR
+    pred_depth[pred_depth < MIN_DEPTH] = MIN_DEPTH
+    pred_depth[pred_depth > MAX_DEPTH] = MAX_DEPTH
+    loss = F.smooth_l1_loss(pred_depth[mask], depth[mask], size_average=True)
+    metric_log.calculate(depth, pred_depth, loss=loss.item())
+    return loss, pred_depth
 
 
 def depth_to_pcl(calib, depth, max_high=1.):
@@ -383,29 +411,68 @@ def train(args):
         raise NotImplementedError()
 
 
-
+    '''
     depth_model = PSMNet(maxdepth=80, maxdisp=192, down=args.depth_down)
     depth_model = nn.DataParallel(depth_model).cuda()
     # torch.backends.cudnn.benchmark = True
     depth_optimizer = optim.Adam(
         depth_model.parameters(), lr=args.depth_lr, betas=(0.9, 0.999))
+    '''
     grid_3D_extended = get_3D_global_grid_extended(700, 800, 35).cuda().float()
 
+    #crkim
+    #--options---
+    '''
+    load_weights_folder = "./monodepth/mono_640x192"
+    encoder_path = os.path.join(load_weights_folder, "encoder.pth")
+    decoder_path = os.path.join(load_weights_folder, "depth.pth")
+    '''
+    num_layers = 18
+    depth_lr = 1e-4
+    scheduler_step_size = 15
+    # -----------
+
+    parameters_to_train = []
+    encoder = networks.ResnetEncoder(num_layers, False)
+    parameters_to_train += list(encoder.parameters())
+
+    depth_decoder = networks.DepthDecoder(encoder.num_ch_enc)
+    parameters_to_train += list(depth_decoder.parameters())
+
+    model_dict = encoder.state_dict()
+    encoder.cuda()
+    depth_decoder.cuda()
+    #encoder= nn.DataParallel(encoder).cuda()
+    #depth_decoder= nn.DataParallel(depth_decoder).cuda()
+    depth_optimizer = optim.Adam(parameters_to_train, lr=depth_lr)
+
+
     if args.depth_pretrain:
-        if os.path.isfile(args.depth_pretrain):
+        #crkim
+        encoder_path = os.path.join(args.depth_pretrain, "encoder.pth")
+        decoder_path = os.path.join(args.depth_pretrain, "depth.pth")
+        if os.path.isfile(encoder_path) and os.path.isfile(decoder_path):
             logger.info("=> loading depth pretrain '{}'".format(
                 args.depth_pretrain))
+            '''
             checkpoint = torch.load(args.depth_pretrain)
             depth_model.load_state_dict(checkpoint['state_dict'])
             depth_optimizer.load_state_dict(checkpoint['optimizer'])
+            '''
+            #crkim
+            encoder_dict = torch.load(encoder_path)
+            encoder.load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
+            depth_decoder.load_state_dict(torch.load(decoder_path))
         else:
             logger.info(
                 '[Attention]: Do not find checkpoint {}'.format(args.depth_pretrain))
-
+    #crkim
+    depth_scheduler = optim.lr_scheduler.StepLR(depth_optimizer,scheduler_step_size, 0.1)
+    '''
     depth_scheduler = MultiStepLR(
         depth_optimizer, milestones=args.depth_lr_stepsize,
         gamma=args.depth_lr_gamma)
-
+    '''
     if args.pixor_pretrain:
         if os.path.isfile(args.pixor_pretrain):
             logger.info("=> loading depth pretrain '{}'".format(
@@ -431,9 +498,14 @@ def train(args):
             pixor.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             scheduler.load_state_dict(checkpoint['scheduler'])
+            #crkim
+            encoder.load_state_dict(checkpoint['encoder_state_dict'])
+            depth_decoder.load_state_dict(checkpoint['depth_state_dict'])
+            '''
             depth_model.load_state_dict(checkpoint['depth_state_dict'])
             depth_optimizer.load_state_dict(checkpoint['depth_optimizer'])
             depth_scheduler.load_state_dict(checkpoint['depth_scheduler'])
+            '''
             start_epoch = checkpoint['epoch'] + 1
             logger.info(
                 "Resumed successfully from epoch {}.".format(start_epoch))
@@ -452,13 +524,21 @@ def train(args):
     last_eval_epoches = []
     for epoch in range(start_epoch, args.epochs):
         pixor.train()
-        depth_model.train()
         scheduler.step()
-        depth_scheduler.step()
         ts = time.time()
+
+        #crkim
+        encoder.train()
+        depth_decoder.train()
+        depth_scheduler.step()
         logger.info("Start epoch {}, depth lr {:.6f} pixor lr {:.7f}".format(
             epoch, depth_optimizer.param_groups[0]['lr'], optimizer.param_groups[0]['lr']))
-
+        '''
+        depth_model.train()
+        depth_scheduler.step()
+        logger.info("Start epoch {}, depth lr {:.6f} pixor lr {:.7f}".format(
+            epoch, depth_optimizer.param_groups[0]['lr'], optimizer.param_groups[0]['lr']))
+        '''
         avg_class_loss = AverageMeter()
         avg_reg_loss = AverageMeter()
         avg_total_loss = AverageMeter()
@@ -471,6 +551,7 @@ def train(args):
                 if not args.e2e:
                     inputs = batch['X'].cuda()
                 else:
+                    color = batch['color'].cuda()
                     imgL = batch['imgL'].cuda()
                     imgR = batch['imgR'].cuda()
                     f = batch['f']
@@ -493,8 +574,12 @@ def train(args):
                     class_outs, reg_outs = pixor(inputs, images,
                                                 img_index, bev_index)
                 else:
+                    '''
                     depth_loss, depth_map = forward_depth_model(
                         imgL, imgR, depth_map, f, train_metric, depth_model)
+                    '''
+                    #crkim
+                    depth_loss, depth_map = forward_monodepth_model(imgL, color, depth_map, f, train_metric, depth_decoder, encoder,mode='TRAIN')
                     inputs = []
                     for i in range(depth_map.shape[0]):
                         calib = utils_func.torchCalib(
@@ -550,7 +635,18 @@ def train(args):
         logger.info("Finish epoch {}, time elapsed {:.3f} s".format(
             epoch, time.time() - ts))
 
+        #crkim
+        if epoch % args.eval_every_epoch == 0 and epoch >= args.start_eval:
+            logger.info("Evaluation begins at epoch {}".format(epoch))
+            evaluate(eval_data, eval_loader, pixor,encoder, depth_decoder,
+                     args.batch_size, gpu=use_gpu, logger=logger,
+                     args=args, epoch=epoch, processes=processes,
+                     grid_3D_extended=grid_3D_extended)
+            if args.run_official_evaluate:
+                last_eval_epoches.append((epoch, 7))
+                last_eval_epoches.append((epoch, 5))
 
+        '''
         if epoch % args.eval_every_epoch == 0 and epoch >= args.start_eval:
             logger.info("Evaluation begins at epoch {}".format(epoch))
             evaluate(eval_data, eval_loader, pixor, depth_model,
@@ -560,7 +656,7 @@ def train(args):
             if args.run_official_evaluate:
                 last_eval_epoches.append((epoch, 7))
                 last_eval_epoches.append((epoch, 5))
-
+        '''
         if len(last_eval_epoches) > 0:
             for e, iou in last_eval_epoches[:]:
                 predicted_results = osp.join(
@@ -579,7 +675,8 @@ def train(args):
             torch.save({'state_dict': pixor.state_dict(),
                         'optimizer': optimizer.state_dict(),
                         'scheduler': scheduler.state_dict(),
-                        'depth_state_dict': depth_model.state_dict(),
+                        'encoder_state_dict': encoder.state_dict(),
+                        'depth_state_dict': depth_decoder.state_dict(),
                         'depth_optimizer': depth_optimizer.state_dict(),
                         'depth_scheduler': depth_scheduler.state_dict(),
                         'epoch': epoch
@@ -587,6 +684,20 @@ def train(args):
             logger.info("model saved to {}".format(saveto))
             symlink_force(saveto, osp.join(savepath, "checkpoint.pth.tar"))
 
+        '''
+        if epoch % args.save_every == 0:
+            saveto = osp.join(savepath, "checkpoint_{}.pth.tar".format(epoch))
+            torch.save({'state_dict': pixor.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'scheduler': scheduler.state_dict(),
+                        'depth_state_dict': depth_model.state_dict(),
+                        'depth_optimizer': depth_optimizer.state_dict(),
+                        'depth_scheduler': depth_scheduler.state_dict(),
+                        'epoch': epoch
+                        }, saveto)
+            logger.info("model saved to {}".format(saveto))
+            symlink_force(saveto, osp.join(savepath, "checkpoint.pth.tar"))
+        '''
 
     for p in processes:
         if p.wait() != 0:
@@ -606,7 +717,7 @@ def train(args):
                             last_eval_epoches.remove((e, iou))
 
 
-def evaluate(dataset, data_loader, model, depth_model, batch_size, gpu=False, logger=None,
+def evaluate(dataset, data_loader, model, encoder, depth_decoder, batch_size, gpu=False, logger=None,
              args=None, epoch=0, processes=[], grid_3D_extended=None):
     torch.manual_seed(666)
     torch.cuda.manual_seed(666)
@@ -619,7 +730,11 @@ def evaluate(dataset, data_loader, model, depth_model, batch_size, gpu=False, lo
     # sanity check
     global label_grid
     model.eval()
+    encoder.eval()
+    depth_decoder.eval()
+    '''
     depth_model.eval()
+    '''
     if logger == None:
         logger.set_logger("eval")
     logger.info("=> eval lidar_dir: {}".format(dataset.dataset.lidar_dir))
@@ -642,6 +757,8 @@ def evaluate(dataset, data_loader, model, depth_model, batch_size, gpu=False, lo
                 else:
                     imgL = batch['imgL'].cuda()
                     imgR = batch['imgR'].cuda()
+                    #crkim
+                    color = batch['color'].cuda()
                     f = batch['f']
                     depth_map = batch['depth_map'].cuda()
                     idxx = batch['idx']
@@ -662,8 +779,7 @@ def evaluate(dataset, data_loader, model, depth_model, batch_size, gpu=False, lo
                     class_outs, reg_outs = pixor(inputs, images,
                                                  img_index, bev_index)
                 else:
-                    depth_loss, depth_map = forward_depth_model(
-                        imgL, imgR, depth_map, f, test_metric, depth_model, 'test')
+                    depth_loss, depth_map = forward_monodepth_model(imgL, color, depth_map, f, test_metric, depth_decoder, encoder,  'test')
                     inputs = []
                     for i in range(depth_map.shape[0]):
                         calib = utils_func.torchCalib(
@@ -810,8 +926,26 @@ if __name__ == "__main__":
         pixor = nn.DataParallel(pixor, device_ids=num_gpu)
         logger.info(
             "Finish cuda loading in {:.3f} s".format(time.time() - ts))
+
+        #crkim
+        #----options-----
+        num_layers = 18
+        #----------------
+        parameters_to_train = []
+        encoder = networks.ResnetEncoder(num_layers, False)
+        encoder = encoder.cuda()
+        #encoder = nn.DataParallel(encoder).cuda()
+        parameters_to_train += list(encoder.parameters())
+
+        depth_decoder = networks.DepthDecoder(encoder.num_ch_enc)
+        depth_decoder = depth_decoder.cuda()
+        #depth_decoder = nn.DataParallel(depth_decoder).cuda()
+        parameters_to_train += list(depth_decoder.parameters())
+        model_dict = encoder.state_dict()
+        '''
         depth_model = PSMNet(maxdepth=80, maxdisp=192, down=args.depth_down)
         depth_model = nn.DataParallel(depth_model, device_ids=num_gpu).cuda()
+        '''
         grid_3D_extended = get_3D_global_grid_extended(700, 800, 35).cuda().float()
 
         if args.eval_ckpt:
@@ -819,7 +953,12 @@ if __name__ == "__main__":
                 logger.info("=> loading checkpoint '{}'".format(
                     args.eval_ckpt))
                 checkpoint = torch.load(args.eval_ckpt)
+                #crkim
+                encoder.load_state_dict(checkpoint['encoder_state_dict'])
+                depth_decoder.load_state_dict(checkpoint['depth_state_dict'])
+                '''
                 depth_model.load_state_dict(checkpoint['depth_state_dict'])
+                '''
                 pixor.load_state_dict(checkpoint['state_dict'])
             else:
                 logger.info(
@@ -827,11 +966,22 @@ if __name__ == "__main__":
 
         else:
             if args.depth_pretrain:
-                if os.path.isfile(args.depth_pretrain):
+                #crkim
+                encoder_path = os.path.join(args.depth_pretrain, "encoder.pth")
+                decoder_path = os.path.join(args.depth_pretrain, "depth.pth")
+                if os.path.isfile(encoder_path) and os.path.isfile(decoder_path):
                     logger.info("=> loading depth pretrain '{}'".format(
                         args.depth_pretrain))
+                    # crkim
+                    encoder_path = os.path.join(args.depth_pretrain, "encoder.pth")
+                    decoder_path = os.path.join(args.depth_pretrain, "depth.pth")
+                    encoder_dict = torch.load(encoder_path)
+                    encoder.load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
+                    depth_decoder.load_state_dict(torch.load(decoder_path))
+                    '''
                     checkpoint = torch.load(args.depth_pretrain)
                     depth_model.load_state_dict(checkpoint['state_dict'])
+                    '''
                 else:
                     logger.info(
                         '[Attention]: Do not find checkpoint {}'.format(args.depth_pretrain))
@@ -848,7 +998,7 @@ if __name__ == "__main__":
 
         processes = []
         logger.info("=> evaluating on {}".format(args.eval_lidar_dir))
-        evaluate(eval_data, eval_loader, pixor, depth_model,
+        evaluate(eval_data, eval_loader, pixor, encoder, depth_decoder,
             args.batch_size, gpu=use_gpu, logger=logger, args=args,
             epoch=args.eval_save_prefix + "eval",
                  processes=processes, grid_3D_extended=grid_3D_extended)

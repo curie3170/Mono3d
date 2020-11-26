@@ -1,0 +1,4 @@
+conda activate mono3d
+cd /media/curie/mono3d
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e.py -c configs/fusion.cfg --root_dir ~/dataset/kitti_3d --pixor_pretrain pixor_checkpoint.pth.tar --depth_pretrain /media/curie/mono3d/monodepth/mono_640x192/
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e.py -c configs/fusion.cfg --root_dir ~/dataset/kitti_3d --mode eval --eval_ckpt /media/curie/mono3d/saves/pixor_e2e/checkpoint_14.pth.tar --gen_predict_file

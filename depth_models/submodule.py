@@ -203,7 +203,6 @@ class feature_extraction_nodownsample(nn.Module):
         output_feature = torch.cat(
             (output_raw, output_skip, output_branch4, output_branch3, output_branch2, output_branch1), 1)
         output_feature = self.lastconv(output_feature)
-
         return output_feature
 
 
@@ -286,7 +285,6 @@ class feature_extraction_full(nn.Module):
         output_feature = torch.cat(
             (output_raw, output_skip, output_branch4, output_branch3, output_branch2, output_branch1), 1)
         output_feature = self.lastconv(output_feature)
-
         return output_feature
 
 

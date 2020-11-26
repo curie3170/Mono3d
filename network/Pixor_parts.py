@@ -83,7 +83,7 @@ class up(nn.Module):
             nn.ConvTranspose2d(in_ch, out_ch, 3, stride = 2, padding = 1, output_padding = 1),
             # nn.GroupNorm(1, out_ch),
             nn.BatchNorm2d(out_ch) if not groupnorm else nn.GroupNorm(8, out_ch),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=False) #crkim
         )
 
         self.bridge = nn.Sequential(
