@@ -298,7 +298,7 @@ def forward_monodepth_model(imgL, color, depth, calib, metric_log, depth_model, 
     # ---------
     mask = (depth >= 1) * (depth <= 80)
     mask.detach_()
-    min_depth = 0.1 #while training
+    min_depth = 0.1  # while training
     max_depth = 100
     # ----
     output = depth_model(encoder_model(color))
