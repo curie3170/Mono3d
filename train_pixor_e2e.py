@@ -8,6 +8,7 @@ import torch.nn.functional as F
 
 import configargparse
 
+import copy
 import numpy as np
 import time
 import os
@@ -297,10 +298,12 @@ def forward_monodepth_model(imgL, color, depth, calib, metric_log, depth_model, 
     # ---------
     mask = (depth >= 1) * (depth <= 80)
     mask.detach_()
+    min_depth = 0.1 #while training
+    max_depth = 100
     # ----
     output = depth_model(encoder_model(color))
-    pred_disp, _ = disp_to_depth(output[("disp", 0)], MIN_DEPTH, MAX_DEPTH)
-    pred_disp = F.interpolate(pred_disp, size=(imgL.shape[2], imgL.shape[3])).squeeze(1)
+    pred_disp, _ = disp_to_depth(output[("disp", 0)], min_depth, max_depth)
+    pred_disp = F.interpolate(pred_disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
     pred_depth = 1 / pred_disp
     pred_depth *= MONO_SCALE_FACTOR
     pred_depth[pred_depth < MIN_DEPTH] = MIN_DEPTH
@@ -397,7 +400,7 @@ def train(args):
         pixor = PixorNet(n_features, groupnorm=args.groupnorm)
 
     ts = time.time()
-    pixor = pixor.cuda()
+    pixor = pixor.to(torch.device("cuda"))
     pixor = nn.DataParallel(pixor, device_ids=num_gpu)
 
     class_criterion = nn.BCELoss(reduction='none')
@@ -431,21 +434,21 @@ def train(args):
     depth_lr = 1e-4
     scheduler_step_size = 15
     # -----------
-
     parameters_to_train = []
-    encoder = networks.ResnetEncoder(num_layers, False)
+    encoder = networks.ResnetEncoder(num_layers, False).to(torch.device("cuda"))
+    encoder = nn.DataParallel(encoder, device_ids=num_gpu)
     parameters_to_train += list(encoder.parameters())
-
-    depth_decoder = networks.DepthDecoder(encoder.num_ch_enc)
+    depth_decoder = networks.DepthDecoder(encoder.module.num_ch_enc).to(torch.device("cuda"))
+    depth_decoder = nn.DataParallel(depth_decoder, device_ids=num_gpu)
     parameters_to_train += list(depth_decoder.parameters())
 
-    model_dict = encoder.state_dict()
-    encoder.cuda()
-    depth_decoder.cuda()
+    # model_dict = encoder.state_dict()
+    # encoder.cuda()
+    # depth_decoder.cuda()
     #encoder= nn.DataParallel(encoder).cuda()
     #depth_decoder= nn.DataParallel(depth_decoder).cuda()
-    depth_optimizer = optim.Adam(parameters_to_train, lr=depth_lr)
 
+    depth_optimizer = optim.Adam(parameters_to_train, lr=depth_lr)
 
     if args.depth_pretrain:
         #crkim
@@ -461,8 +464,13 @@ def train(args):
             '''
             #crkim
             encoder_dict = torch.load(encoder_path)
-            encoder.load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
-            depth_decoder.load_state_dict(torch.load(decoder_path))
+            encoder_dict = {'module.'+k: v for k, v in encoder_dict.items()}
+            encoder.load_state_dict(encoder_dict)
+            decoder_dict = torch.load(decoder_path)
+            decoder_dict = {'module.'+k: v for k, v in decoder_dict.items()}
+            depth_decoder.load_state_dict(decoder_dict, strict=False)
+            # encoder = nn.DataParallel(encoder.cuda(), device_ids=num_gpu)
+            # depth_decoder = nn.DataParallel(depth_decoder.cuda(), device_ids=num_gpu)
         else:
             logger.info(
                 '[Attention]: Do not find checkpoint {}'.format(args.depth_pretrain))
@@ -475,7 +483,7 @@ def train(args):
     '''
     if args.pixor_pretrain:
         if os.path.isfile(args.pixor_pretrain):
-            logger.info("=> loading depth pretrain '{}'".format(
+            logger.info("=> loading pixor pretrain '{}'".format(
                 args.pixor_pretrain))
             checkpoint = torch.load(args.pixor_pretrain)
             pixor.load_state_dict(checkpoint['state_dict'])
@@ -579,7 +587,10 @@ def train(args):
                         imgL, imgR, depth_map, f, train_metric, depth_model)
                     '''
                     #crkim
+                    #gt_map = depth_map
                     depth_loss, depth_map = forward_monodepth_model(imgL, color, depth_map, f, train_metric, depth_decoder, encoder,mode='TRAIN')
+                    #print(np.median(gt_map[gt_map>0].cpu().detach().numpy())/np.median(depth_map[depth_map>0].cpu().detach().numpy()))
+
                     inputs = []
                     for i in range(depth_map.shape[0]):
                         calib = utils_func.torchCalib(
@@ -594,7 +605,6 @@ def train(args):
                             ptc = torch.mm(ptc, roty.t())
                         voxel = gen_feature_diffused_tensor(
                             ptc, 700, 800, grid_3D_extended, diffused=args.diffused)
-
                         if flip[i] > 0:
                             voxel = torch.flip(voxel, [2])
 
@@ -786,9 +796,28 @@ def evaluate(dataset, data_loader, model, encoder, depth_decoder, batch_size, gp
                             dataset.dataset.get_calibration(idxx[i]), h_shift[i])
                         H, W = ori_shape[0][i], ori_shape[1][i]
                         depth = depth_map[i][-H:, :W]
+
+                        #crkim
+                        save_depth = np.uint16(depth.clone().cpu().numpy()*256)
+                        save_path = os.path.join(args.saverootpath, args.run_name,"pred_depth")
+                        if not osp.exists(save_path):
+                            os.makedirs(save_path)
+                        save_path = os.path.join(save_path,"{:06d}.png".format(idxx[i]))
+                        cv.imwrite(save_path, save_depth)
+
                         ptc = depth_to_pcl(calib, depth, max_high=1.)
                         ptc_np = ptc.clone().cpu().numpy()
                         ptc_np = ptc_np.astype(np.float32)
+
+                        #crkim
+                        save_path = os.path.join(args.saverootpath, args.run_name, "pred_velodyne")
+                        if not osp.exists(save_path):
+                            os.makedirs(save_path)
+                        save_path = os.path.join(save_path, "{:06d}.bin".format(idxx[i]))
+                        f = open(save_path, 'wb')
+                        f.write(ptc_np)
+                        f.close()
+
                         ptc = calib.lidar_to_rect(ptc[:, 0:3])
                         inputs.append(gen_feature_diffused_tensor(
                             ptc, 700, 800, grid_3D_extended, diffused=args.diffused))
@@ -971,10 +1000,12 @@ if __name__ == "__main__":
                 decoder_path = os.path.join(args.depth_pretrain, "depth.pth")
                 if os.path.isfile(encoder_path) and os.path.isfile(decoder_path):
                     logger.info("=> loading depth pretrain '{}'".format(
-                        args.depth_pretrain))
+                        encoder_path))
+                    logger.info("=> loading depth pretrain '{}'".format(
+                        decoder_path))
                     # crkim
-                    encoder_path = os.path.join(args.depth_pretrain, "encoder.pth")
-                    decoder_path = os.path.join(args.depth_pretrain, "depth.pth")
+                    #encoder_path = os.path.join(args.depth_pretrain, "encoder.pth")
+                    #decoder_path = os.path.join(args.depth_pretrain, "depth.pth")
                     encoder_dict = torch.load(encoder_path)
                     encoder.load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
                     depth_decoder.load_state_dict(torch.load(decoder_path))
@@ -988,7 +1019,7 @@ if __name__ == "__main__":
 
             if args.pixor_pretrain:
                 if os.path.isfile(args.pixor_pretrain):
-                    logger.info("=> loading depth pretrain '{}'".format(
+                    logger.info("=> loading pixor pretrain '{}'".format(
                         args.pixor_pretrain))
                     checkpoint = torch.load(args.pixor_pretrain)
                     pixor.load_state_dict(checkpoint['state_dict'])
