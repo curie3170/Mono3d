@@ -1,13 +1,4 @@
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.optim import lr_scheduler
-from torch.optim.lr_scheduler import StepLR, MultiStepLR
-from torch.utils.data import DataLoader
-import torch.nn.functional as F
-
 import configargparse
-
 import copy
 import numpy as np
 import time
@@ -16,30 +7,36 @@ import errno
 import os.path as osp
 import subprocess
 import random
-from tqdm import tqdm
 import cv2 as cv
+from tqdm import tqdm
 
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+from torch.optim import lr_scheduler
+from torch.optim.lr_scheduler import StepLR, MultiStepLR
+from torch.utils.data import DataLoader
+
+import utils_func
+from utils.logger import set_logger, get_logger
+from utils.avg_meters import AverageMeter
+from data.kitti_loader_lidar import KittiDataset_Fusion_stereo
+from kitti_evaluate import predict_kitti_to_file
+from kitti_process_detection import gen_feature_diffused_tensor, get_3D_global_grid_extended
 from network.pixor_fusion import PixorNet_Fusion
 
-from data.kitti_loader_lidar import KittiDataset_Fusion_stereo
-from utils.logger import set_logger, get_logger
-from kitti_evaluate import predict_kitti_to_file
-from utils.avg_meters import AverageMeter
-
-from kitti_process_detection import gen_feature_diffused_tensor, get_3D_global_grid_extended
-
-#from depth_models.stackhourglass_fix import PSMNet
-import utils_func
-
-#crkim
-MONO_SCALE_FACTOR = 31.286
-MIN_DEPTH = 1e-3
-MAX_DEPTH = 80
 from monodepth.layers import disp_to_depth
 from monodepth.utils import readlines
 from monodepth.options import MonodepthOptions
 from monodepth import datasets
 from monodepth import networks
+
+
+MONO_SCALE_FACTOR = 31.286
+MIN_DEPTH = 1e-3
+MAX_DEPTH = 80
+
 
 def symlink_force(target, link_name):
     try:
@@ -51,6 +48,7 @@ def symlink_force(target, link_name):
         else:
             raise e
 
+
 def get_grid_2D(zsize, xsize):
     z = np.linspace(0.0 + 70.0 / zsize / 2, 70.0 - 70.0 / zsize / 2, num=zsize)
     x = np.linspace(-40.0 + 80.0 / xsize / 2, 40.0 -
@@ -61,7 +59,9 @@ def get_grid_2D(zsize, xsize):
             pc_grid[:, i, j] = [x[j], z[i]]
     return pc_grid
 
+
 label_grid = get_grid_2D(175, 200)
+
 
 def parse_args():
     parser = configargparse.ArgParser(
@@ -206,6 +206,7 @@ def forward(epoch, model, inputs, class_labels, reg_labels,
                         class_labels, reg_labels,
                         class_criterion, reg_criterion, args)
 
+
 def display_args(args, logger):
     use_gpu = torch.cuda.is_available()
     num_gpu = list(range(torch.cuda.device_count()))
@@ -220,78 +221,28 @@ def display_args(args, logger):
         logger.info("{} = {}".format(arg, getattr(args, arg)))
     logger.info("===================================")
 
+
 def get_eval_dataset(args):
     eval_file = os.path.join(
         args.image_sets, "{}.txt".format(args.eval_dataset))
     n_features = 35 if args.no_reflex else 36
-    if args.pixor_fusion:
-        if args.e2e:
-            eval_data = KittiDataset_Fusion_stereo(txt_file=eval_file,
-                                            flip_rate=0,
-                                            random_shift_scale=0,
-                                            lidar_dir=args.eval_lidar_dir,
-                                            label_dir=args.eval_label_dir,
-                                            calib_dir=args.eval_calib_dir,
-                                            image_dir=args.eval_image_dir,
-                                            root_dir=args.root_dir,
-                                            only_feature=args.no_cal_loss,
-                                            split=args.split,
-                                            image_downscale=args.image_downscale,
-                                            crop_height=args.crop_height)
-        else:
-            eval_data = KittiDataset_Fusion(txt_file=eval_file,
-                                        flip_rate=0,
-                                        lidar_dir=args.eval_lidar_dir,
-                                        label_dir=args.eval_label_dir,
-                                        calib_dir=args.eval_calib_dir,
-                                        image_dir=args.eval_image_dir,
-                                        n_features=n_features,
-                                        root_dir=args.root_dir,
-                                        only_feature=args.no_cal_loss,
-                                        split=args.split,
-                                        image_downscale=args.image_downscale)
-    else:
-        eval_data = KittiDataset(txt_file=eval_file,
-            flip_rate=0,
-            lidar_dir=args.eval_lidar_dir,
-            label_dir=args.eval_label_dir,
-            calib_dir=args.eval_calib_dir,
-            image_dir=args.eval_image_dir,
-            n_features=n_features,
-            root_dir=args.root_dir,
-            only_feature=args.no_cal_loss,
-            split=args.split)
+    eval_data = KittiDataset_Fusion_stereo(txt_file=eval_file,
+                                    flip_rate=0,
+                                    random_shift_scale=0,
+                                    lidar_dir=args.eval_lidar_dir,
+                                    label_dir=args.eval_label_dir,
+                                    calib_dir=args.eval_calib_dir,
+                                    image_dir=args.eval_image_dir,
+                                    root_dir=args.root_dir,
+                                    only_feature=args.no_cal_loss,
+                                    split=args.split,
+                                    image_downscale=args.image_downscale,
+                                    crop_height=args.crop_height)
     eval_loader = DataLoader(
         eval_data, batch_size=args.batch_size, shuffle=False, num_workers=4)
     return eval_data, eval_loader
-'''
-def forward_depth_model(imgL, imgR, depth, calib, metric_log, model, mode='TRAIN'):
-    # model.train()
-    calib = calib.float()
 
-    # ---------
-    mask = (depth >= 1) * (depth <= 80)
-    mask.detach_()
-    # ----
 
-    if mode == 'TRAIN':
-        output1, output2, output3 = model(imgL, imgR, calib)
-        output1 = torch.squeeze(output1, 1)
-        output2 = torch.squeeze(output2, 1)
-        output3 = torch.squeeze(output3, 1)
-
-        loss = 0.5 * F.smooth_l1_loss(output1[mask], depth[mask], size_average=True) + 0.7 * F.smooth_l1_loss(
-            output2[mask], depth[mask], size_average=True) + F.smooth_l1_loss(output3[mask], depth[mask],
-            size_average=True)
-    else:
-        output3 = model(imgL, imgR, calib)
-        output3 = torch.squeeze(output3, 1)
-
-        loss = F.smooth_l1_loss(output3[mask], depth[mask], size_average=True)
-
-    metric_log.calculate(depth, output3, loss=loss.item())
-    return loss, output3
-'''
 def forward_monodepth_model(imgL, color, depth, calib, metric_log, depth_model, encoder_model, mode='TRAIN'):
     calib = calib.float()
 
@@ -301,8 +252,9 @@ def forward_monodepth_model(imgL, color, depth, calib, metric_log, depth_model, 
     min_depth = 0.1  # while training
     max_depth = 100
     # ----
-    output = depth_model(encoder_model(color))
-    pred_disp, _ = disp_to_depth(output[("disp", 0)], min_depth, max_depth)
+    output = depth_model(encoder_model(color))[-1]
+    # pred_disp, _ = disp_to_depth(output[("disp", 0)], min_depth, max_depth)
+    pred_disp, _ = disp_to_depth(output, min_depth, max_depth)
     pred_disp = F.interpolate(pred_disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
     pred_depth = 1 / pred_disp
     pred_depth *= MONO_SCALE_FACTOR
@@ -345,62 +297,34 @@ def train(args):
     if not osp.exists(savepath):
         os.makedirs(savepath)
 
-
     train_file = os.path.join(
         args.image_sets, "{}.txt".format(args.train_dataset))
     n_features = 35 if args.no_reflex else 36
-    if args.pixor_fusion:
-        if args.e2e:
-            train_data = KittiDataset_Fusion_stereo(txt_file=train_file,
-                                             flip_rate=args.flip_rate,
-                                            lidar_dir=args.eval_lidar_dir,
-                                            label_dir=args.eval_label_dir,
-                                            calib_dir=args.eval_calib_dir,
-                                            image_dir=args.eval_image_dir,
-                                            root_dir=args.root_dir,
-                                            only_feature=args.no_cal_loss,
-                                            split=args.split,
-                                            image_downscale=args.image_downscale,
-                                            crop_height=args.crop_height,
-                                            random_shift_scale=args.random_shift_scale  )
-        else:
-            train_data = KittiDataset_Fusion(
-                txt_file=train_file,
-                flip_rate=args.flip_rate,
-                lidar_dir=args.train_lidar_dir,
-                label_dir=args.train_label_dir,
-                calib_dir=args.train_calib_dir,
-                n_features=n_features,
-                random_shift_scale=args.random_shift_scale,
-                root_dir=args.root_dir,
-                image_downscale=args.image_downscale)
-
-    else:
-        train_data = KittiDataset(
-            txt_file=train_file,
-            flip_rate=args.flip_rate,
-            lidar_dir=args.train_lidar_dir,
-            label_dir=args.train_label_dir,
-            calib_dir=args.train_calib_dir,
-            image_dir=args.train_image_dir,
-            n_features=n_features,
-            random_shift_scale=args.random_shift_scale,
-            root_dir=args.root_dir)
+    train_data = KittiDataset_Fusion_stereo(
+        txt_file=train_file,
+        flip_rate=args.flip_rate,
+        lidar_dir=args.eval_lidar_dir,
+        label_dir=args.eval_label_dir,
+        calib_dir=args.eval_calib_dir,
+        image_dir=args.eval_image_dir,
+        root_dir=args.root_dir,
+        only_feature=args.no_cal_loss,
+        split=args.split,
+        image_downscale=args.image_downscale,
+        crop_height=args.crop_height,
+        random_shift_scale=args.random_shift_scale)
     train_loader = DataLoader(
         train_data, batch_size=args.batch_size, shuffle=True, num_workers=8)
 
     eval_data, eval_loader = get_eval_dataset(args)
 
-    if args.pixor_fusion:
-        pixor = PixorNet_Fusion(n_features, groupnorm=args.groupnorm,
-                                resnet_type=args.resnet_type,
-                                image_downscale=args.image_downscale,
-                                resnet_chls=args.resnet_chls)
-    else:
-        pixor = PixorNet(n_features, groupnorm=args.groupnorm)
+    pixor = PixorNet_Fusion(n_features, groupnorm=args.groupnorm,
+                            resnet_type=args.resnet_type,
+                            image_downscale=args.image_downscale,
+                            resnet_chls=args.resnet_chls)
 
     ts = time.time()
-    pixor = pixor.to(torch.device("cuda"))
+    pixor = pixor.cuda()  # to(torch.device("cuda"))
     pixor = nn.DataParallel(pixor, device_ids=num_gpu)
 
     class_criterion = nn.BCELoss(reduction='none')
@@ -413,74 +337,44 @@ def train(args):
     else:
         raise NotImplementedError()
 
-
-    '''
-    depth_model = PSMNet(maxdepth=80, maxdisp=192, down=args.depth_down)
-    depth_model = nn.DataParallel(depth_model).cuda()
-    # torch.backends.cudnn.benchmark = True
-    depth_optimizer = optim.Adam(
-        depth_model.parameters(), lr=args.depth_lr, betas=(0.9, 0.999))
-    '''
     grid_3D_extended = get_3D_global_grid_extended(700, 800, 35).cuda().float()
 
-    #crkim
     #--options---
-    '''
-    load_weights_folder = "./monodepth/mono_640x192"
-    encoder_path = os.path.join(load_weights_folder, "encoder.pth")
-    decoder_path = os.path.join(load_weights_folder, "depth.pth")
-    '''
     num_layers = 18
     depth_lr = 1e-4
     scheduler_step_size = 15
     # -----------
     parameters_to_train = []
-    encoder = networks.ResnetEncoder(num_layers, False).to(torch.device("cuda"))
+    encoder = networks.ResnetEncoder(num_layers, False).cuda() # to(torch.device("cuda"))
     encoder = nn.DataParallel(encoder, device_ids=num_gpu)
     parameters_to_train += list(encoder.parameters())
-    depth_decoder = networks.DepthDecoder(encoder.module.num_ch_enc).to(torch.device("cuda"))
+    depth_decoder = networks.DepthDecoder(encoder.module.num_ch_enc).cuda()  # .to(torch.device("cuda"))
     depth_decoder = nn.DataParallel(depth_decoder, device_ids=num_gpu)
     parameters_to_train += list(depth_decoder.parameters())
-
-    # model_dict = encoder.state_dict()
-    # encoder.cuda()
-    # depth_decoder.cuda()
-    #encoder= nn.DataParallel(encoder).cuda()
-    #depth_decoder= nn.DataParallel(depth_decoder).cuda()
 
     depth_optimizer = optim.Adam(parameters_to_train, lr=depth_lr)
 
     if args.depth_pretrain:
-        #crkim
         encoder_path = os.path.join(args.depth_pretrain, "encoder.pth")
         decoder_path = os.path.join(args.depth_pretrain, "depth.pth")
         if os.path.isfile(encoder_path) and os.path.isfile(decoder_path):
             logger.info("=> loading depth pretrain '{}'".format(
                 args.depth_pretrain))
-            '''
-            checkpoint = torch.load(args.depth_pretrain)
-            depth_model.load_state_dict(checkpoint['state_dict'])
-            depth_optimizer.load_state_dict(checkpoint['optimizer'])
-            '''
-            #crkim
+
             encoder_dict = torch.load(encoder_path)
-            encoder_dict = {'module.'+k: v for k, v in encoder_dict.items()}
+            encoder_dict = {'module.'+k: v for k, v in encoder_dict.items() if k not in ['height', 'width', 'use_stereo']}
             encoder.load_state_dict(encoder_dict)
             decoder_dict = torch.load(decoder_path)
-            decoder_dict = {'module.'+k: v for k, v in decoder_dict.items()}
-            depth_decoder.load_state_dict(decoder_dict, strict=False)
-            # encoder = nn.DataParallel(encoder.cuda(), device_ids=num_gpu)
-            # depth_decoder = nn.DataParallel(depth_decoder.cuda(), device_ids=num_gpu)
+            # decoder_dict = {'module.'+k: v for k, v in decoder_dict.items()}
+            # decoder_dict = {k: v for k, v in decoder_dict.items()}
+            # depth_decoder.load_state_dict(decoder_dict, strict=False)
+
         else:
             logger.info(
                 '[Attention]: Do not find checkpoint {}'.format(args.depth_pretrain))
-    #crkim
+
     depth_scheduler = optim.lr_scheduler.StepLR(depth_optimizer,scheduler_step_size, 0.1)
-    '''
-    depth_scheduler = MultiStepLR(
-        depth_optimizer, milestones=args.depth_lr_stepsize,
-        gamma=args.depth_lr_gamma)
-    '''
+
     if args.pixor_pretrain:
         if os.path.isfile(args.pixor_pretrain):
             logger.info("=> loading pixor pretrain '{}'".format(
@@ -506,7 +400,7 @@ def train(args):
             pixor.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             scheduler.load_state_dict(checkpoint['scheduler'])
-            #crkim
+
             encoder.load_state_dict(checkpoint['encoder_state_dict'])
             depth_decoder.load_state_dict(checkpoint['depth_state_dict'])
             '''
@@ -541,12 +435,7 @@ def train(args):
         depth_scheduler.step()
         logger.info("Start epoch {}, depth lr {:.6f} pixor lr {:.7f}".format(
             epoch, depth_optimizer.param_groups[0]['lr'], optimizer.param_groups[0]['lr']))
-        '''
-        depth_model.train()
-        depth_scheduler.step()
-        logger.info("Start epoch {}, depth lr {:.6f} pixor lr {:.7f}".format(
-            epoch, depth_optimizer.param_groups[0]['lr'], optimizer.param_groups[0]['lr']))
-        '''
+
         avg_class_loss = AverageMeter()
         avg_reg_loss = AverageMeter()
         avg_total_loss = AverageMeter()
@@ -554,66 +443,47 @@ def train(args):
         train_metric = utils_func.Metric()
 
         for iteration, batch in enumerate(train_loader):
+            color = batch['color'].cuda()
+            imgL = batch['imgL'].cuda()
+            imgR = batch['imgR'].cuda()
+            f = batch['f']
+            depth_map = batch['depth_map'].cuda()
+            idxx = batch['idx']
+            h_shift = batch['h_shift']
+            ori_shape = batch['ori_shape']
+            a_shift = batch['a_shift']
+            flip = batch['flip']
+            images = batch['image'].cuda()
+            img_index = batch['img_index'].cuda()
+            bev_index = batch['bev_index'].cuda()
 
-            if args.pixor_fusion:
-                if not args.e2e:
-                    inputs = batch['X'].cuda()
-                else:
-                    color = batch['color'].cuda()
-                    imgL = batch['imgL'].cuda()
-                    imgR = batch['imgR'].cuda()
-                    f = batch['f']
-                    depth_map = batch['depth_map'].cuda()
-                    idxx = batch['idx']
-                    h_shift = batch['h_shift']
-                    ori_shape = batch['ori_shape']
-                    a_shift = batch['a_shift']
-                    flip = batch['flip']
-                images = batch['image'].cuda()
-                img_index = batch['img_index'].cuda()
-                bev_index = batch['bev_index'].cuda()
-            else:
-                inputs = batch['X'].cuda()
             class_labels = batch['cl'].cuda()
             reg_labels = batch['rl'].cuda()
 
-            if args.pixor_fusion:
-                if not args.e2e:
-                    class_outs, reg_outs = pixor(inputs, images,
-                                                img_index, bev_index)
-                else:
-                    '''
-                    depth_loss, depth_map = forward_depth_model(
-                        imgL, imgR, depth_map, f, train_metric, depth_model)
-                    '''
-                    #crkim
-                    #gt_map = depth_map
-                    depth_loss, depth_map = forward_monodepth_model(imgL, color, depth_map, f, train_metric, depth_decoder, encoder,mode='TRAIN')
-                    #print(np.median(gt_map[gt_map>0].cpu().detach().numpy())/np.median(depth_map[depth_map>0].cpu().detach().numpy()))
+            depth_loss, depth_map = forward_monodepth_model(imgL, color, depth_map, f, train_metric, depth_decoder, encoder,mode='TRAIN')
 
-                    inputs = []
-                    for i in range(depth_map.shape[0]):
-                        calib = utils_func.torchCalib(
-                            train_data.dataset.get_calibration(idxx[i]), h_shift[i])
-                        H, W = ori_shape[0][i], ori_shape[1][i]
-                        depth = depth_map[i][-H:, :W]
-                        ptc = depth_to_pcl(calib, depth, max_high=1.)
-                        ptc = calib.lidar_to_rect(ptc[:, 0:3])
+            inputs = []
+            for i in range(depth_map.shape[0]):
+                calib = utils_func.torchCalib(
+                    train_data.dataset.get_calibration(idxx[i]), h_shift[i])
+                H, W = ori_shape[0][i], ori_shape[1][i]
+                depth = depth_map[i][-H:, :W]
+                ptc = depth_to_pcl(calib, depth, max_high=1.)
+                ptc = calib.lidar_to_rect(ptc[:, 0:3])
 
-                        if torch.abs(a_shift[i]).item() > 1e-6:
-                            roty = utils_func.roty_pth(a_shift[i]).cuda()
-                            ptc = torch.mm(ptc, roty.t())
-                        voxel = gen_feature_diffused_tensor(
-                            ptc, 700, 800, grid_3D_extended, diffused=args.diffused)
-                        if flip[i] > 0:
-                            voxel = torch.flip(voxel, [2])
+                if torch.abs(a_shift[i]).item() > 1e-6:
+                    roty = utils_func.roty_pth(a_shift[i]).cuda()
+                    ptc = torch.mm(ptc, roty.t())
+                voxel = gen_feature_diffused_tensor(
+                    ptc, 700, 800, grid_3D_extended, diffused=args.diffused)
+                if flip[i] > 0:
+                    voxel = torch.flip(voxel, [2])
 
-                        inputs.append(voxel)
-                    inputs = torch.stack(inputs)
-                    class_outs, reg_outs = pixor(inputs, images,
-                                                 img_index, bev_index)
-            else:
-                class_outs, reg_outs = pixor(inputs)
+                inputs.append(voxel)
+            inputs = torch.stack(inputs)
+            class_outs, reg_outs = pixor(inputs, images,
+                                            img_index, bev_index)
+
             class_outs = class_outs.squeeze(1)
             class_loss, reg_loss, loss = \
                 compute_loss(epoch, class_outs, reg_outs,
@@ -645,7 +515,6 @@ def train(args):
         logger.info("Finish epoch {}, time elapsed {:.3f} s".format(
             epoch, time.time() - ts))
 
-        #crkim
         if epoch % args.eval_every_epoch == 0 and epoch >= args.start_eval:
             logger.info("Evaluation begins at epoch {}".format(epoch))
             evaluate(eval_data, eval_loader, pixor,encoder, depth_decoder,
@@ -656,17 +525,6 @@ def train(args):
                 last_eval_epoches.append((epoch, 7))
                 last_eval_epoches.append((epoch, 5))
 
-        '''
-        if epoch % args.eval_every_epoch == 0 and epoch >= args.start_eval:
-            logger.info("Evaluation begins at epoch {}".format(epoch))
-            evaluate(eval_data, eval_loader, pixor, depth_model,
-                        args.batch_size, gpu=use_gpu, logger=logger,
-                     args=args, epoch=epoch, processes=processes,
-                     grid_3D_extended=grid_3D_extended)
-            if args.run_official_evaluate:
-                last_eval_epoches.append((epoch, 7))
-                last_eval_epoches.append((epoch, 5))
-        '''
         if len(last_eval_epoches) > 0:
             for e, iou in last_eval_epoches[:]:
                 predicted_results = osp.join(
@@ -693,21 +551,6 @@ def train(args):
                         }, saveto)
             logger.info("model saved to {}".format(saveto))
             symlink_force(saveto, osp.join(savepath, "checkpoint.pth.tar"))
-
-        '''
-        if epoch % args.save_every == 0:
-            saveto = osp.join(savepath, "checkpoint_{}.pth.tar".format(epoch))
-            torch.save({'state_dict': pixor.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'scheduler': scheduler.state_dict(),
-                        'depth_state_dict': depth_model.state_dict(),
-                        'depth_optimizer': depth_optimizer.state_dict(),
-                        'depth_scheduler': depth_scheduler.state_dict(),
-                        'epoch': epoch
-                        }, saveto)
-            logger.info("model saved to {}".format(saveto))
-            symlink_force(saveto, osp.join(savepath, "checkpoint.pth.tar"))
-        '''
 
     for p in processes:
         if p.wait() != 0:
@@ -742,9 +585,7 @@ def evaluate(dataset, data_loader, model, encoder, depth_decoder, batch_size, gp
     model.eval()
     encoder.eval()
     depth_decoder.eval()
-    '''
-    depth_model.eval()
-    '''
+
     if logger == None:
         logger.set_logger("eval")
     logger.info("=> eval lidar_dir: {}".format(dataset.dataset.lidar_dir))
