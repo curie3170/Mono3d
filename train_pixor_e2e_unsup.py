@@ -26,7 +26,7 @@ from kitti_evaluate import predict_kitti_to_file
 from kitti_process_detection import gen_feature_diffused_tensor, get_3D_global_grid_extended
 from network.pixor_fusion import PixorNet_Fusion
 
-from monodepth.layers import disp_to_depth
+from monodepth.layers import * #disp_to_depth, transformation_from_parameters, BackprojectDepth, Project3D
 from monodepth.utils import readlines
 from monodepth.options import MonodepthOptions
 from monodepth import datasets
@@ -81,7 +81,7 @@ def parse_args():
     parser.add_argument('--root_dir', type=str,
         default="/scratch/datasets/KITTI/object")
     parser.add_argument('--raw_dir', type=str,
-        default="/root/dataset/kitti_raw")    
+        default="/root/dataset/kitti_raw1")    
     parser.add_argument('--train_label_dir', type=str, default='label_2')
     parser.add_argument('--eval_label_dir', type=str, default='label_2')
     parser.add_argument('--train_calib_dir', type=str, default='calib')
@@ -104,6 +104,7 @@ def parse_args():
     parser.add_argument('--depth_pretrain', default=None,
                         help='load model')
     parser.add_argument("--diffused", action="store_true")
+    parser.add_argument("--depth_loss", type=str,choices=["M", "MD", "D"],default="D")
 
     # hyperparameters
     parser.add_argument('--pixor_pretrain', default=None,
@@ -246,9 +247,7 @@ def get_eval_dataset(args):
     return eval_data, eval_loader
 
 
-def forward_monodepth_model(imgL, color, depth, calib, metric_log, depth_model, encoder_model, mode='TRAIN'):
-    calib = calib.float()
-
+def forward_monodepth_model(imgL, color, depth, metric_log, depth_model, encoder_model, mode='TRAIN'):
     # ---------
     mask = (depth >= 1) * (depth <= 80)
     mask.detach_()
@@ -266,6 +265,46 @@ def forward_monodepth_model(imgL, color, depth, calib, metric_log, depth_model, 
     loss = F.smooth_l1_loss(pred_depth[mask], depth[mask], size_average=True)
     metric_log.calculate(depth, pred_depth, loss=loss.item())
     return loss, pred_depth
+
+def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, imgL, prev_image, depth_map):
+    """Predict poses between input frames for monocular sequences.
+    """
+    #predict_poses
+    pose_inputs = [prev_image, imgL]
+    #pose_inputs = [imgL, pose_image]
+    pose_inputs = [pose_encoder(torch.cat(pose_inputs, 1))]
+    axisangle, translation = pose_decoder(pose_inputs)
+    cam_T_cam = transformation_from_parameters(axisangle[:, 0], translation[:, 0], invert=True)
+
+    """Generate the warped (reprojected) color images for a minibatch.
+    Generated images are saved into the `outputs` dictionary.
+    """
+    K = intrinsic.float()
+    inv_K = torch.inverse(K)
+    _, _, h, w = imgL.shape
+    backproject_depth = BackprojectDepth(args.batch_size, h, w).cuda()
+    project_3d = Project3D(args.batch_size, h, w).cuda()
+    cam_points = backproject_depth(depth_map, inv_K)
+    pix_coords = project_3d(cam_points, K, cam_T_cam[:,:3,:])
+    warped_img = F.grid_sample(prev_image, pix_coords, padding_mode="border")
+    """Computes reprojection loss between a batch of predicted and target images
+    """
+    abs_diff = torch.abs(prev_image - warped_img)
+    l1_loss = abs_diff.mean(1, True)
+    ssim = SSIM().cuda()
+    ssim_loss = ssim(prev_image, warped_img).mean(1, True)
+    reprojection_loss = 0.85 * ssim_loss + 0.15 * l1_loss
+    '''
+    #save
+    savepath = osp.join(args.saverootpath, args.run_name, "warped")
+    if not osp.exists(savepath):
+        os.makedirs(savepath)
+    from torchvision.utils import save_image
+    save_image(warped_img, osp.join(savepath, "warped.png"))
+    save_image(imgL, osp.join(savepath, "imgL.png"))
+    save_image(prev_image, osp.join(savepath, "prev_image.png"))
+    '''
+    return reprojection_loss.mean()
 
 
 def depth_to_pcl(calib, depth, max_high=1.):
@@ -347,6 +386,9 @@ def train(args):
     num_layers = 18
     depth_lr = 1e-4
     scheduler_step_size = 15
+    num_pose_frames = 2
+    weights_init = "pretrained"
+    #frame_ids = [0, 1]
     # -----------
     parameters_to_train = []
     encoder = networks.ResnetEncoder(num_layers, False).cuda() # to(torch.device("cuda"))
@@ -355,6 +397,15 @@ def train(args):
     depth_decoder = networks.DepthDecoder(encoder.module.num_ch_enc).cuda()  # .to(torch.device("cuda"))
     depth_decoder = nn.DataParallel(depth_decoder, device_ids=num_gpu)
     parameters_to_train += list(depth_decoder.parameters())
+    #depth_optimizer = optim.Adam(parameters_to_train, lr=depth_lr)
+    if "M" in args.depth_loss:
+        pose_encoder = networks.ResnetEncoder(num_layers, weights_init, num_input_images=num_pose_frames).cuda()
+        pose_encoder = nn.DataParallel(pose_encoder, device_ids=num_gpu)
+        parameters_to_train += list(pose_encoder.parameters())
+        
+        pose_decoder = networks.PoseDecoder(pose_encoder.module.num_ch_enc, num_input_features=1, num_frames_to_predict_for=2).cuda()   
+        pose_decoder = nn.DataParallel(pose_decoder, device_ids=num_gpu)            
+        parameters_to_train += list(pose_decoder.parameters())
 
     depth_optimizer = optim.Adam(parameters_to_train, lr=depth_lr)
 
@@ -362,16 +413,38 @@ def train(args):
         encoder_path = os.path.join(args.depth_pretrain, "encoder.pth")
         decoder_path = os.path.join(args.depth_pretrain, "depth.pth")
         if os.path.isfile(encoder_path) and os.path.isfile(decoder_path):
-            logger.info("=> loading depth pretrain '{}'".format(
-                args.depth_pretrain))
-
+            logger.info("=> loading depth pretrain '{}'".format(args.depth_pretrain))
             encoder_dict = torch.load(encoder_path)
             encoder_dict = {'module.'+k: v for k, v in encoder_dict.items() if k not in ['height', 'width', 'use_stereo']}
             encoder.load_state_dict(encoder_dict)
             decoder_dict = torch.load(decoder_path)
-            # decoder_dict = {'module.'+k: v for k, v in decoder_dict.items()}
-            # decoder_dict = {k: v for k, v in decoder_dict.items()}
-            # depth_decoder.load_state_dict(decoder_dict, strict=False)
+            #decoder_dict = {'module.'+k: v for k, v in decoder_dict.items()}
+            #decoder_dict = {k: v for k, v in decoder_dict.items()}
+            #depth_decoder.load_state_dict(decoder_dict, strict=False)]
+            key_list = list(decoder_dict.keys())
+            new_key_list = list(depth_decoder.state_dict().keys())
+            new_key_map = {kl: nkl for kl, nkl in zip(key_list, new_key_list)}
+            decoder_dict = {new_key_map[k]: v for k, v in decoder_dict.items()}
+            depth_decoder.load_state_dict(decoder_dict)
+            if "M" in args.depth_loss:
+                pose_encoder_path = os.path.join(args.depth_pretrain, "pose_encoder.pth")
+                pose_decoder_path = os.path.join(args.depth_pretrain, "pose.pth")
+                if os.path.isfile(pose_encoder_path) and os.path.isfile(pose_decoder_path):
+                    logger.info("=> loading pose encoder pretrain '{}'".format(pose_encoder_path))
+                    logger.info("=> loading pose decoder pretrain '{}'".format(pose_decoder_path))
+                    pose_encoder_dict = torch.load(pose_encoder_path)
+                    key_list = list(pose_encoder_dict.keys())
+                    new_key_list = list(pose_encoder.state_dict().keys())
+                    new_key_map = {kl: nkl for kl, nkl in zip(key_list, new_key_list)}
+                    pose_encoder_dict = {new_key_map[k]: v for k, v in pose_encoder_dict.items()}
+                    pose_encoder.load_state_dict(pose_encoder_dict)
+
+                    pose_decoder_dict = torch.load(pose_decoder_path)
+                    key_list = list(pose_decoder_dict.keys())
+                    new_key_list = list(pose_decoder.state_dict().keys())
+                    new_key_map = {kl: nkl for kl, nkl in zip(key_list, new_key_list)}
+                    pose_decoder_dict = {new_key_map[k]: v for k, v in pose_decoder_dict.items()}
+                    pose_decoder.load_state_dict(pose_decoder_dict)
 
         else:
             logger.info(
@@ -407,6 +480,8 @@ def train(args):
 
             encoder.load_state_dict(checkpoint['encoder_state_dict'])
             depth_decoder.load_state_dict(checkpoint['depth_state_dict'])
+            pose_encoder.load_state_dict(checkpoint['pose_encoder_dict'])
+            pose_decoder.load_state_dict(checkpoint['pose_decoder_dict'])
             '''
             depth_model.load_state_dict(checkpoint['depth_state_dict'])
             depth_optimizer.load_state_dict(checkpoint['depth_optimizer'])
@@ -448,6 +523,10 @@ def train(args):
 
         for iteration, batch in enumerate(train_loader):
             color = batch['color'].cuda()
+            post_image = batch['post_image'].cuda()
+            prev_image = batch['prev_image'].cuda()
+            intrinsic = batch['intrinsic'].cuda()
+
             imgL = batch['imgL'].cuda()
             imgR = batch['imgR'].cuda()
             f = batch['f']
@@ -463,8 +542,15 @@ def train(args):
 
             class_labels = batch['cl'].cuda()
             reg_labels = batch['rl'].cuda()
+            depth_loss, depth_map = forward_monodepth_model(imgL, color, depth_map, train_metric, depth_decoder, encoder,mode='TRAIN')
+            reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, imgL, prev_image, depth_map)
 
-            depth_loss, depth_map = forward_monodepth_model(imgL, color, depth_map, f, train_metric, depth_decoder, encoder,mode='TRAIN')
+            if "D" == args.depth_loss:
+                depth_loss = depth_loss
+            elif "M" == args.depth_loss:
+                depth_loss = reprojection_loss
+            elif "MD" == args.depth_loss:
+                depth_loss += reprojection_loss 
 
             inputs = []
             for i in range(depth_map.shape[0]):
@@ -549,6 +635,8 @@ def train(args):
                         'scheduler': scheduler.state_dict(),
                         'encoder_state_dict': encoder.state_dict(),
                         'depth_state_dict': depth_decoder.state_dict(),
+                        'pose_encoder_dict': pose_encoder.state_dict(),
+                        'pose_decoder_dict': pose_decoder.state_dict(),
                         'depth_optimizer': depth_optimizer.state_dict(),
                         'depth_scheduler': depth_scheduler.state_dict(),
                         'epoch': epoch
@@ -614,6 +702,10 @@ def evaluate(dataset, data_loader, model, encoder, depth_decoder, batch_size, gp
                     imgR = batch['imgR'].cuda()
                     #crkim
                     color = batch['color'].cuda()
+                    post_image = batch['post_image'].cuda()
+                    prev_image = batch['prev_image'].cuda()
+                    intrinsic = batch['intrinsic'].cuda()
+
                     f = batch['f']
                     depth_map = batch['depth_map'].cuda()
                     idxx = batch['idx']
@@ -634,7 +726,7 @@ def evaluate(dataset, data_loader, model, encoder, depth_decoder, batch_size, gp
                     class_outs, reg_outs = pixor(inputs, images,
                                                  img_index, bev_index)
                 else:
-                    depth_loss, depth_map = forward_monodepth_model(imgL, color, depth_map, f, test_metric, depth_decoder, encoder,  'test')
+                    depth_loss, depth_map = forward_monodepth_model(imgL, color, depth_map, test_metric, depth_decoder, encoder,  'test')
                     inputs = []
                     for i in range(depth_map.shape[0]):
                         calib = utils_func.torchCalib(
@@ -808,14 +900,23 @@ if __name__ == "__main__":
         parameters_to_train = []
         encoder = networks.ResnetEncoder(num_layers, False)
         encoder = encoder.cuda()
-        #encoder = nn.DataParallel(encoder).cuda()
+        encoder = nn.DataParallel(encoder).cuda()
         parameters_to_train += list(encoder.parameters())
 
         depth_decoder = networks.DepthDecoder(encoder.num_ch_enc)
         depth_decoder = depth_decoder.cuda()
-        #depth_decoder = nn.DataParallel(depth_decoder).cuda()
+        depth_decoder = nn.DataParallel(depth_decoder).cuda()
         parameters_to_train += list(depth_decoder.parameters())
         model_dict = encoder.state_dict()
+
+        pose_encoder = networks.ResnetEncoder(num_layers, weights_init, num_input_images=num_pose_frames).cuda()
+        pose_encoder = nn.DataParallel(pose_encoder, device_ids=num_gpu)
+        parameters_to_train += list(pose_encoder.parameters())
+        
+        pose_decoder = networks.PoseDecoder(pose_encoder.module.num_ch_enc, num_input_features=1, num_frames_to_predict_for=2).cuda()   
+        pose_decoder = nn.DataParallel(pose_decoder, device_ids=num_gpu)            
+        parameters_to_train += list(pose_decoder.parameters())
+
         '''
         depth_model = PSMNet(maxdepth=80, maxdisp=192, down=args.depth_down)
         depth_model = nn.DataParallel(depth_model, device_ids=num_gpu).cuda()
@@ -834,6 +935,9 @@ if __name__ == "__main__":
                 depth_model.load_state_dict(checkpoint['depth_state_dict'])
                 '''
                 pixor.load_state_dict(checkpoint['state_dict'])
+
+                pose_encoder.load_state_dict(checkpoint['pose_encoder_dict'])
+                pose_decoder.load_state_dict(checkpoint['pose_decoder_dict'])
             else:
                 logger.info(
                     '[Attention]: Do not find checkpoint {}'.format(args.eval_ckpt))
@@ -864,9 +968,28 @@ if __name__ == "__main__":
                     checkpoint = torch.load(args.depth_pretrain)
                     depth_model.load_state_dict(checkpoint['state_dict'])
                     '''
-                else:
-                    logger.info(
-                        '[Attention]: Do not find checkpoint {}'.format(args.depth_pretrain))
+                    if "M" in args.depth_loss:
+                        pose_encoder_path = os.path.join(args.depth_pretrain, "pose_encoder.pth")
+                        pose_decoder_path = os.path.join(args.depth_pretrain, "pose.pth")
+                        if os.path.isfile(pose_encoder_path) and os.path.isfile(pose_decoder_path):
+                            logger.info("=> loading pose encoder pretrain '{}'".format(pose_encoder_path))
+                            logger.info("=> loading pose decoder pretrain '{}'".format(pose_decoder_path))
+                            pose_encoder_dict = torch.load(pose_encoder_path)
+                            key_list = list(pose_encoder_dict.keys())
+                            new_key_list = list(pose_encoder.state_dict().keys())
+                            new_key_map = {kl: nkl for kl, nkl in zip(key_list, new_key_list)}
+                            pose_encoder_dict = {new_key_map[k]: v for k, v in pose_encoder_dict.items()}
+                            pose_encoder.load_state_dict(pose_encoder_dict)
+
+                            pose_decoder_dict = torch.load(pose_decoder_path)
+                            key_list = list(pose_decoder_dict.keys())
+                            new_key_list = list(pose_decoder.state_dict().keys())
+                            new_key_map = {kl: nkl for kl, nkl in zip(key_list, new_key_list)}
+                            pose_decoder_dict = {new_key_map[k]: v for k, v in pose_decoder_dict.items()}
+                            pose_decoder.load_state_dict(pose_decoder_dict)
+            else:
+                logger.info(
+                    '[Attention]: Do not find checkpoint {}'.format(args.depth_pretrain))
 
             if args.pixor_pretrain:
                 if os.path.isfile(args.pixor_pretrain):

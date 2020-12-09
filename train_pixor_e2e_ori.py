@@ -673,7 +673,7 @@ def evaluate(dataset, data_loader, model, depth_model, batch_size, gpu=False, lo
 
                         # crkim
                         save_depth = np.uint16(depth.clone().cpu().numpy() * 256)
-                        save_path = os.path.join(args.saverootpath, "pred_depth")
+                        save_path = os.path.join(args.saverootpath, args.run_name, "pred_depth")
                         if not osp.exists(save_path):
                             os.makedirs(save_path)
                         save_path = os.path.join(save_path, "{:06d}.png".format(idxx[i]))
@@ -684,7 +684,7 @@ def evaluate(dataset, data_loader, model, depth_model, batch_size, gpu=False, lo
                         ptc_np = ptc_np.astype(np.float32)
 
                         # crkim
-                        save_path = os.path.join(args.saverootpath, "pred_velodyne")
+                        save_path = os.path.join(args.saverootpath, args.run_name, "pred_velodyne")
                         if not osp.exists(save_path):
                             os.makedirs(save_path)
                         save_path = os.path.join(save_path, "{:06d}.bin".format(idxx[i]))

@@ -66,13 +66,20 @@ class kitti_object(object):
     def __len__(self):
         return self.num_samples
 
-
+    
     def get_image_path(self, idx, is_left=True):
         assert(idx < self.num_samples)
         if is_left:
             return os.path.join(self.image_dir, '%06d.png' % (idx))
         else:
             return os.path.join(self.image2_dir, '%06d.png' % (idx))
+
+    #crkim
+    def get_raw_image(self, raw_path):
+        if not os.path.exists(raw_path):
+            print(raw_path)
+        assert(os.path.exists(raw_path))
+        return utils.load_image(raw_path)
 
     def get_image(self, idx):
         assert(idx<self.num_samples)
