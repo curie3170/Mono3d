@@ -908,7 +908,7 @@ if __name__ == "__main__":
         depth_decoder = nn.DataParallel(depth_decoder).cuda()
         parameters_to_train += list(depth_decoder.parameters())
         model_dict = encoder.state_dict()
-
+        '''
         pose_encoder = networks.ResnetEncoder(num_layers, weights_init, num_input_images=num_pose_frames).cuda()
         pose_encoder = nn.DataParallel(pose_encoder, device_ids=num_gpu)
         parameters_to_train += list(pose_encoder.parameters())
@@ -916,6 +916,7 @@ if __name__ == "__main__":
         pose_decoder = networks.PoseDecoder(pose_encoder.module.num_ch_enc, num_input_features=1, num_frames_to_predict_for=2).cuda()   
         pose_decoder = nn.DataParallel(pose_decoder, device_ids=num_gpu)            
         parameters_to_train += list(pose_decoder.parameters())
+        '''
 
         '''
         depth_model = PSMNet(maxdepth=80, maxdisp=192, down=args.depth_down)
@@ -935,9 +936,9 @@ if __name__ == "__main__":
                 depth_model.load_state_dict(checkpoint['depth_state_dict'])
                 '''
                 pixor.load_state_dict(checkpoint['state_dict'])
-
-                pose_encoder.load_state_dict(checkpoint['pose_encoder_dict'])
-                pose_decoder.load_state_dict(checkpoint['pose_decoder_dict'])
+                #crkim
+                #pose_encoder.load_state_dict(checkpoint['pose_encoder_dict'])
+                #pose_decoder.load_state_dict(checkpoint['pose_decoder_dict'])
             else:
                 logger.info(
                     '[Attention]: Do not find checkpoint {}'.format(args.eval_ckpt))
@@ -968,6 +969,7 @@ if __name__ == "__main__":
                     checkpoint = torch.load(args.depth_pretrain)
                     depth_model.load_state_dict(checkpoint['state_dict'])
                     '''
+                    '''
                     if "M" in args.depth_loss:
                         pose_encoder_path = os.path.join(args.depth_pretrain, "pose_encoder.pth")
                         pose_decoder_path = os.path.join(args.depth_pretrain, "pose.pth")
@@ -987,6 +989,7 @@ if __name__ == "__main__":
                             new_key_map = {kl: nkl for kl, nkl in zip(key_list, new_key_list)}
                             pose_decoder_dict = {new_key_map[k]: v for k, v in pose_decoder_dict.items()}
                             pose_decoder.load_state_dict(pose_decoder_dict)
+                    '''
             else:
                 logger.info(
                     '[Attention]: Do not find checkpoint {}'.format(args.depth_pretrain))
