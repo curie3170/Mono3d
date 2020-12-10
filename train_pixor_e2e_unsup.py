@@ -264,12 +264,11 @@ def forward_monodepth_model(imgL, color, depth, metric_log, depth_model, encoder
     pred_depth[pred_depth > MAX_DEPTH] = MAX_DEPTH
     loss = F.smooth_l1_loss(pred_depth[mask], depth[mask], size_average=True)
     metric_log.calculate(depth, pred_depth, loss=loss.item())
-    return loss, pred_depth
+    return loss, pred_depth, pred_disp
 
-def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, imgL, prev_image, depth_map):
+def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, imgL, prev_image,depth_map, disp):
     """Predict poses between input frames for monocular sequences.
     """
-    #predict_poses
     pose_inputs = [prev_image, imgL]
     #pose_inputs = [imgL, pose_image]
     pose_inputs = [pose_encoder(torch.cat(pose_inputs, 1))]
@@ -279,12 +278,19 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, imgL, prev_i
     """Generate the warped (reprojected) color images for a minibatch.
     Generated images are saved into the `outputs` dictionary.
     """
+    depth = 1 / disp
+    depth *= MONO_SCALE_FACTOR
+    
     K = intrinsic.float()
     inv_K = torch.inverse(K)
+    if not imgL.shape[2:] == depth.shape[1:]:
+        print (imgL.shape[2:])
+        print (prev_image.shape[2:])
+        print (depth.shape[1:])
     _, _, h, w = imgL.shape
     backproject_depth = BackprojectDepth(args.batch_size, h, w).cuda()
     project_3d = Project3D(args.batch_size, h, w).cuda()
-    cam_points = backproject_depth(depth_map, inv_K)
+    cam_points = backproject_depth(depth, inv_K)
     pix_coords = project_3d(cam_points, K, cam_T_cam[:,:3,:])
     warped_img = F.grid_sample(prev_image, pix_coords, padding_mode="border")
     """Computes reprojection loss between a batch of predicted and target images
@@ -294,16 +300,18 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, imgL, prev_i
     ssim = SSIM().cuda()
     ssim_loss = ssim(prev_image, warped_img).mean(1, True)
     reprojection_loss = 0.85 * ssim_loss + 0.15 * l1_loss
-    '''
+    
     #save
-    savepath = osp.join(args.saverootpath, args.run_name, "warped")
+    savepath = osp.join(args.saverootpath, args.run_name)
     if not osp.exists(savepath):
         os.makedirs(savepath)
     from torchvision.utils import save_image
+    save_depth = np.uint16(depth_map[0].clone().detach().cpu().numpy()*256)
+    cv.imwrite(osp.join(savepath, "depth.png"), save_depth)
     save_image(warped_img, osp.join(savepath, "warped.png"))
     save_image(imgL, osp.join(savepath, "imgL.png"))
     save_image(prev_image, osp.join(savepath, "prev_image.png"))
-    '''
+    
     return reprojection_loss.mean()
 
 
@@ -511,6 +519,9 @@ def train(args):
         #crkim
         encoder.train()
         depth_decoder.train()
+        if "M" in args.depth_loss:
+            pose_encoder.train()
+            pose_decoder.train()
         depth_scheduler.step()
         logger.info("Start epoch {}, depth lr {:.6f} pixor lr {:.7f}".format(
             epoch, depth_optimizer.param_groups[0]['lr'], optimizer.param_groups[0]['lr']))
@@ -542,15 +553,16 @@ def train(args):
 
             class_labels = batch['cl'].cuda()
             reg_labels = batch['rl'].cuda()
-            depth_loss, depth_map = forward_monodepth_model(imgL, color, depth_map, train_metric, depth_decoder, encoder,mode='TRAIN')
-            reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, imgL, prev_image, depth_map)
-
+            depth_loss, depth_map, disp = forward_monodepth_model(imgL, color, depth_map, train_metric, depth_decoder, encoder,mode='TRAIN')
+           
             if "D" == args.depth_loss:
                 depth_loss = depth_loss
             elif "M" == args.depth_loss:
-                depth_loss = reprojection_loss
+                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, imgL, prev_image, depth_map, disp)
+                depth_loss = reprojection_loss *10
             elif "MD" == args.depth_loss:
-                depth_loss += reprojection_loss 
+                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, imgL, prev_image, depth_map, disp)
+                depth_loss += reprojection_loss *10
 
             inputs = []
             for i in range(depth_map.shape[0]):

@@ -123,7 +123,7 @@ class KittiDataset_Fusion_stereo(Dataset):
         #crkim
         P = calib.P[:3,:3].astype(float)
         P[0] *= 1248/W
-        P[1] *= 384/h
+        P[1] *= 304/h #304
         rand_idx = self.train_rand[data_idx]
         raw = self.train_mapping[int(rand_idx)-1].split(" ")
         post_path = os.path.join(self.raw_dir, str(raw[0]+"/"+raw[1]+"/"), "image_02/data", str(int(raw[2])+1).zfill(10) + ".jpg")
