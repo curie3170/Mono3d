@@ -159,7 +159,8 @@ class KittiDataset_Fusion_stereo(Dataset):
             prev_image = F.pad(prev_image, (0, right_pad, 0, 0), "constant", 0)
             post_image = post_image[:,-self.crop_height:,:]
             prev_image = prev_image[:,-self.crop_height:,:]
-
+        assert (post_image.shape == imgL.shape)
+        assert (prev_image.shape == imgL.shape)
         if not self.only_feature:
             class_label, reg_label = \
                 get_labels(self.dataset, data_idx,

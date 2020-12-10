@@ -254,9 +254,9 @@ def forward_monodepth_model(imgL, color, depth, metric_log, depth_model, encoder
     min_depth = 0.1  # while training
     max_depth = 100
     # ----
-    output = depth_model(encoder_model(color))[-1]
+    disp = depth_model(encoder_model(color))[-1]
     # pred_disp, _ = disp_to_depth(output[("disp", 0)], min_depth, max_depth)
-    pred_disp, _ = disp_to_depth(output, min_depth, max_depth)
+    pred_disp, _ = disp_to_depth(disp, min_depth, max_depth)
     pred_disp = F.interpolate(pred_disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
     pred_depth = 1 / pred_disp
     pred_depth *= MONO_SCALE_FACTOR
@@ -264,7 +264,7 @@ def forward_monodepth_model(imgL, color, depth, metric_log, depth_model, encoder
     pred_depth[pred_depth > MAX_DEPTH] = MAX_DEPTH
     loss = F.smooth_l1_loss(pred_depth[mask], depth[mask], size_average=True)
     metric_log.calculate(depth, pred_depth, loss=loss.item())
-    return loss, pred_depth, pred_disp
+    return loss, pred_depth, disp
 
 def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, imgL, prev_image,depth_map, disp):
     """Predict poses between input frames for monocular sequences.
@@ -278,9 +278,14 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, imgL, prev_i
     """Generate the warped (reprojected) color images for a minibatch.
     Generated images are saved into the `outputs` dictionary.
     """
-    depth = 1 / disp
-    depth *= MONO_SCALE_FACTOR
-    
+    min_depth = 0.1  # while training
+    max_depth = 100
+    disp = F.interpolate(disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
+    _, depth = disp_to_depth(disp, min_depth, max_depth)
+    #depth *= MONO_SCALE_FACTOR
+    #depth[depth < MIN_DEPTH] = MIN_DEPTH
+    #depth[depth > MAX_DEPTH] = MAX_DEPTH
+
     K = intrinsic.float()
     inv_K = torch.inverse(K)
     if not imgL.shape[2:] == depth.shape[1:]:
