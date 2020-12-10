@@ -136,8 +136,9 @@ class KittiDataset_Fusion_stereo(Dataset):
         curr_image = Image.open(curr_path).convert('RGB')
         post_image = Image.open(post_path).convert('RGB')
         prev_image = Image.open(prev_path).convert('RGB')
-        color_prev = self.trans(post_image)
-        color_post = self.trans(prev_image)
+        color = self.trans(curr_image)
+        color_prev = self.trans(prev_image)
+        color_post = self.trans(post_image)
         curr_image = self.to_tensor(curr_image)
         post_image = self.to_tensor(post_image)
         prev_image = self.to_tensor(prev_image)
@@ -149,6 +150,7 @@ class KittiDataset_Fusion_stereo(Dataset):
                               (0, right_pad, top_pad, 0), "constant", -1)
             h_shift = 0
             #crkim 
+            color = F.pad(color, (0, right_pad, top_pad, 0), "constant", 0)
             color_post = F.pad(color_post, (0, right_pad, top_pad, 0), "constant", 0)
             color_prev = F.pad(color_prev, (0, right_pad, top_pad, 0), "constant", 0)
             curr_image = F.pad(curr_image, (0, right_pad, top_pad, 0), "constant", 0)
@@ -165,11 +167,13 @@ class KittiDataset_Fusion_stereo(Dataset):
             depth_map = depth_map[-self.crop_height:,:]
             H = self.crop_height
             #crkim
+            color = F.pad(color, (0, right_pad, 0, 0), "constant", 0)
             color_post = F.pad(color_post, (0, right_pad, 0, 0), "constant", 0)
             color_prev = F.pad(color_prev, (0, right_pad, 0, 0), "constant", 0)
             curr_image = F.pad(curr_image, (0, right_pad, 0, 0), "constant", 0)
             post_image = F.pad(post_image, (0, right_pad, 0, 0), "constant", 0)
             prev_image = F.pad(prev_image, (0, right_pad, 0, 0), "constant", 0)
+            color = color[:,-self.crop_height:,:]
             color_post = color_post[:,-self.crop_height:,:]
             color_prev = color_prev[:,-self.crop_height:,:]
             curr_image = curr_image[:,-self.crop_height:,:]
@@ -197,7 +201,8 @@ class KittiDataset_Fusion_stereo(Dataset):
                 reg_label = torch.flip(reg_label, [2])
                 reg_label[0, :, :] *= -1  # cos(pi - theta)
                 reg_label[2, :, :] *= -1  # dx
-        color = F.interpolate(imgL.unsqueeze(dim=0), size=(192,640)).squeeze(0)
+        #color = F.interpolate(imgL.unsqueeze(dim=0), size=(192,640)).squeeze(0)
+        color = F.interpolate(color.unsqueeze(dim=0), size=(192,640)).squeeze(0)
         color_post = F.interpolate(color_post.unsqueeze(dim=0), size=(192,640)).squeeze(0)
         color_prev = F.interpolate(color_prev.unsqueeze(dim=0), size=(192,640)).squeeze(0)
 

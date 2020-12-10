@@ -283,10 +283,10 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
     color_prev = norm_image_seq['color_prev']
     reprojection_losses = []
     loss = 0
-    for idx, pose_input in enumerate([[color_prev, color], [color, color_post]]):
+    for idx, pose_input in enumerate([[color_prev, color], [color_post, color]]):
         pose_input = [pose_encoder(torch.cat(pose_input, 1))]
         axisangle, translation = pose_decoder(pose_input)
-        cam_T_cam = transformation_from_parameters(axisangle[:, 0], translation[:, 0], invert=(idx == 0))
+        cam_T_cam = transformation_from_parameters(axisangle[:, 0], translation[:, 0], invert = True) #invert=(idx == 0))
 
         """Generate the warped (reprojected) color images for a minibatch.
         Generated images are saved into the `outputs` dictionary.
@@ -320,19 +320,32 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         """Computes reprojection loss between a batch of predicted and target images
         """
         reprojection_loss = compute_reprojection_loss(curr_image, warped_img)
-        #save
-        savepath = osp.join(args.saverootpath, args.run_name)
-        if not osp.exists(savepath):
-            os.makedirs(savepath)
-        from torchvision.utils import save_image
-        save_depth = depth
-        for i in range(args.batch_size):
-            save_depth[i] = depth[i]/ depth[i].max()
-        save_image(save_depth, osp.join(savepath, "depth.png"))
-        save_image(warped_img, osp.join(savepath, "warped.png"))
-        save_image(curr_image, osp.join(savepath, "curr_image.png"))
-        save_image(adjacent_img, osp.join(savepath, "adjacent_img.png"))
         reprojection_losses.append(reprojection_loss)
+
+        
+        if idx == 0:
+            prev_image = adjacent_img
+            prev_warp_img = warped_img
+        else:
+            post_image = adjacent_img
+            post_warp_img = warped_img
+    #save
+    from torchvision.utils import save_image
+    save_depth = depth
+    savepath = osp.join(args.saverootpath, args.run_name)
+    if not osp.exists(savepath):
+        os.makedirs(savepath)
+    for i in range(args.batch_size):
+        save_depth[i] = depth[i]/ depth[i].max()
+    save_image(save_depth, osp.join(savepath, "depth.png"))
+    colors = torch.cat((color_prev, color, color_post), dim=0)
+    save_image(colors, osp.join(savepath, "colors_norm.png"),nrow= 6)
+    images = torch.cat((prev_image, curr_image, post_image), dim=0)    
+    save_image(images, osp.join(savepath, "images.png"),nrow= 6)
+    warps = torch.cat((prev_warp_img, curr_image, post_warp_img), dim=0)    
+    save_image(warps, osp.join(savepath, "warps.png"),nrow= 6)
+    
+    #return (reprojection_losses[0].mean()+reprojection_losses[1].mean())/2
 
     reprojection_losses = torch.cat(reprojection_losses, 1)
     identity_reprojection_losses = []
@@ -352,6 +365,7 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
     smooth_loss = get_smooth_loss(norm_disp, color)
     loss += 1e-3* smooth_loss
     return loss
+    
 
 def depth_to_pcl(calib, depth, max_high=1.):
     rows, cols = depth.shape
@@ -597,13 +611,13 @@ def train(args):
             if "D" == args.depth_loss:
                 depth_loss = depth_loss
             elif "M" == args.depth_loss:
-                norm_image_seq = {'color':color, 'color_post': color_post, 'color_prev':color_prev}
-                image_seq = {'curr_image':curr_image, 'post_image':post_image, 'prev_image':prev_image}
+                norm_image_seq = {'color':color, 'color_post': color_post, 'color_prev':color_prev} #network input
+                image_seq = {'curr_image':curr_image, 'post_image':post_image, 'prev_image':prev_image} #warp image
                 reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp)
                 depth_loss = reprojection_loss *10
             elif "MD" == args.depth_loss:
-                norm_image_seq = {'color':color, 'color_post': color_post, 'color_prev':color_prev}
-                image_seq = {'curr_image':curr_image, 'post_image':post_image, 'prev_image':prev_image}
+                norm_image_seq = {'color':color, 'color_post': color_post, 'color_prev':color_prev} #network input
+                image_seq = {'curr_image':curr_image, 'post_image':post_image, 'prev_image':prev_image} #warp image
                 reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp)
                 depth_loss += reprojection_loss *10
 
@@ -654,7 +668,7 @@ def train(args):
                     " reg_loss: {:.5f}, loss: {:.5f}".format(epoch,
                         iteration, avg_class_loss.avg, avg_reg_loss.avg,
                         avg_total_loss.avg))
-
+                logger.info("depth loss: {:.5f}".format(depth_loss))
                 logger.info(train_metric.print(epoch, iteration))
         
         depth_scheduler.step()
