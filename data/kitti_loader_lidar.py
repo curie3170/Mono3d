@@ -53,10 +53,12 @@ class KittiDataset_Fusion_stereo(Dataset):
         not_exist = [1444,2667,3921,3942,6661,7018,7338,
                     613,1272,2365,3793,4839,6873,7027,7299]
         self.data = [x for x in self.data if x not in not_exist]
+
         self.train_mapping = readlines(os.path.join("./image_sets", "train_mapping.txt"))
         self.train_rand = readlines(os.path.join("./image_sets", "train_rand.txt"))
         self.train_rand = self.train_rand[0].split(",")
         self.raw_dir = raw_dir
+        self.to_tensor = transforms.ToTensor()
 
         self.flip_rate = flip_rate
         self.reduce_points_rate = reduce_points_rate
@@ -123,17 +125,22 @@ class KittiDataset_Fusion_stereo(Dataset):
         #crkim
         P = calib.P[:3,:3].astype(float)
         P[0] *= 1248/W
-        P[1] *= 304/h #304
+        P[1] *= 304/H #304
         rand_idx = self.train_rand[data_idx]
         raw = self.train_mapping[int(rand_idx)-1].split(" ")
+        curr_path = os.path.join(self.raw_dir, str(raw[0]+"/"+raw[1]+"/"), "image_02/data", raw[2] + ".jpg")
         post_path = os.path.join(self.raw_dir, str(raw[0]+"/"+raw[1]+"/"), "image_02/data", str(int(raw[2])+1).zfill(10) + ".jpg")
         prev_path = os.path.join(self.raw_dir, str(raw[0]+"/"+raw[1]+"/"), "image_02/data", str(int(raw[2])-1).zfill(10) + ".jpg")
         #post_image = self.dataset.get_raw_image(post_path)
         #prev_image = self.dataset.get_raw_image(prev_path)
+        curr_image = Image.open(curr_path).convert('RGB')
         post_image = Image.open(post_path).convert('RGB')
         prev_image = Image.open(prev_path).convert('RGB')
-        post_image = self.trans(post_image)
-        prev_image = self.trans(prev_image)
+        color_prev = self.trans(post_image)
+        color_post = self.trans(prev_image)
+        curr_image = self.to_tensor(curr_image)
+        post_image = self.to_tensor(post_image)
+        prev_image = self.to_tensor(prev_image)
 
         if self.crop_height < 0:
             imgL = F.pad(imgL, (0, right_pad, top_pad, 0), "constant", 0)
@@ -141,7 +148,10 @@ class KittiDataset_Fusion_stereo(Dataset):
             depth_map = F.pad(torch.Tensor(depth_map),
                               (0, right_pad, top_pad, 0), "constant", -1)
             h_shift = 0
-            #crkim
+            #crkim 
+            color_post = F.pad(color_post, (0, right_pad, top_pad, 0), "constant", 0)
+            color_prev = F.pad(color_prev, (0, right_pad, top_pad, 0), "constant", 0)
+            curr_image = F.pad(curr_image, (0, right_pad, top_pad, 0), "constant", 0)
             post_image = F.pad(post_image, (0, right_pad, top_pad, 0), "constant", 0)
             prev_image = F.pad(prev_image, (0, right_pad, top_pad, 0), "constant", 0)
         else:
@@ -155,10 +165,18 @@ class KittiDataset_Fusion_stereo(Dataset):
             depth_map = depth_map[-self.crop_height:,:]
             H = self.crop_height
             #crkim
+            color_post = F.pad(color_post, (0, right_pad, 0, 0), "constant", 0)
+            color_prev = F.pad(color_prev, (0, right_pad, 0, 0), "constant", 0)
+            curr_image = F.pad(curr_image, (0, right_pad, 0, 0), "constant", 0)
             post_image = F.pad(post_image, (0, right_pad, 0, 0), "constant", 0)
             prev_image = F.pad(prev_image, (0, right_pad, 0, 0), "constant", 0)
+            color_post = color_post[:,-self.crop_height:,:]
+            color_prev = color_prev[:,-self.crop_height:,:]
+            curr_image = curr_image[:,-self.crop_height:,:]
             post_image = post_image[:,-self.crop_height:,:]
             prev_image = prev_image[:,-self.crop_height:,:]
+        assert (color_post.shape == imgL.shape)
+        assert (color_prev.shape == imgL.shape)    
         assert (post_image.shape == imgL.shape)
         assert (prev_image.shape == imgL.shape)
         if not self.only_feature:
@@ -180,16 +198,24 @@ class KittiDataset_Fusion_stereo(Dataset):
                 reg_label[0, :, :] *= -1  # cos(pi - theta)
                 reg_label[2, :, :] *= -1  # dx
         color = F.interpolate(imgL.unsqueeze(dim=0), size=(192,640)).squeeze(0)
+        color_post = F.interpolate(color_post.unsqueeze(dim=0), size=(192,640)).squeeze(0)
+        color_prev = F.interpolate(color_prev.unsqueeze(dim=0), size=(192,640)).squeeze(0)
+
+        curr_image = F.interpolate(curr_image.unsqueeze(dim=0), size=(192,640)).squeeze(0)
+        post_image = F.interpolate(post_image.unsqueeze(dim=0), size=(192,640)).squeeze(0)
+        prev_image = F.interpolate(prev_image.unsqueeze(dim=0), size=(192,640)).squeeze(0)
 
         if self.only_feature:
             return {'color': color,'imgL': imgL, 'imgR': imgR, 'f': f, 'depth_map': depth_map,
                     'idx': data_idx,
                     'image': image, 'img_index': img_index, 'bev_index': bev_index, 'h_shift':h_shift,
                     'ori_shape': [H, W], 'flip': flip, 'a_shift': shift,
-                    'post_image': post_image, 'prev_image': prev_image, 'intrinsic' : P} #crkim
+                    'color_post': color_post,'color_prev': color_prev, #crkim for network inputs 640x192
+                    'curr_image': curr_image,'post_image': post_image, 'prev_image': prev_image, 'intrinsic' : P} #crkim
         else:
             return {'color': color,'imgL': imgL, 'imgR': imgR, 'f': f,  'depth_map': depth_map,
                     'cl': class_label, 'rl': reg_label, 'idx': data_idx,
                     'image': image, 'img_index': img_index, 'bev_index': bev_index, 'h_shift':h_shift,
                     'ori_shape': [H, W], 'flip': flip, 'a_shift': shift,
-                    'post_image': post_image, 'prev_image': prev_image,'intrinsic' : P} #crkim
+                    'color_post': color_post,'color_prev': color_prev, #crkim
+                    'curr_image': curr_image,'post_image': post_image, 'prev_image': prev_image,'intrinsic' : P} #crkim
