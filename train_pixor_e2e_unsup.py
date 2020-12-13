@@ -31,7 +31,7 @@ from monodepth.utils import readlines
 from monodepth.options import MonodepthOptions
 from monodepth import datasets
 from monodepth import networks
-
+from torchvision.utils import save_image
 
 MONO_SCALE_FACTOR = 31.286
 MIN_DEPTH = 1e-3
@@ -275,7 +275,7 @@ def compute_reprojection_loss(target, pred):
     return reprojection_loss
 
 
-def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp):
+def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, iteration):
     """Predict poses between input frames for monocular sequences.
     """
     color = norm_image_seq['color']# b*1*192*640
@@ -283,10 +283,10 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
     color_prev = norm_image_seq['color_prev']
     reprojection_losses = []
     loss = 0
-    for idx, pose_input in enumerate([[color_prev, color], [color_post, color]]):
+    for idx, pose_input in enumerate([[color_prev, color], [color, color_post]]):
         pose_input = [pose_encoder(torch.cat(pose_input, 1))]
         axisangle, translation = pose_decoder(pose_input)
-        cam_T_cam = transformation_from_parameters(axisangle[:, 0], translation[:, 0], invert = True) #invert=(idx == 0))
+        cam_T_cam = transformation_from_parameters(axisangle[:, 0], translation[:, 0], invert=(idx == 0)) #invert=(idx == 0))
 
         """Generate the warped (reprojected) color images for a minibatch.
         Generated images are saved into the `outputs` dictionary.
@@ -301,17 +301,18 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
 
         K = intrinsic.float()
         inv_K = torch.inverse(K)
+
         if not color.shape[2:] == depth.shape[2:]:
             print (color.shape[2:])
             print (color_prev.shape[2:])
             print (color_post.shape[2:])
         _, _, h, w = depth.shape 
 
-        backproject_depth = BackprojectDepth(args.batch_size, h, w).cuda()
-        project_3d = Project3D(args.batch_size, h, w).cuda()
+        backproject_depth = BackprojectDepth(inv_K.shape[0], h, w).cuda()
+        project_3d = Project3D(inv_K.shape[0], h, w).cuda()
         cam_points = backproject_depth(depth, inv_K)
         pix_coords = project_3d(cam_points, K, cam_T_cam[:,:3,:])
-        curr_image =  image_seq['curr_image'] # b*3*192*640
+        curr_image =  image_seq['curr_image'] # b*3*H_ori *W_ori
         if idx ==0 :
             adjacent_img = image_seq['prev_image']
         else :
@@ -329,22 +330,22 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         else:
             post_image = adjacent_img
             post_warp_img = warped_img
-    #save
-    from torchvision.utils import save_image
-    save_depth = depth
-    savepath = osp.join(args.saverootpath, args.run_name)
-    if not osp.exists(savepath):
-        os.makedirs(savepath)
-    for i in range(args.batch_size):
-        save_depth[i] = depth[i]/ depth[i].max()
-    save_image(save_depth, osp.join(savepath, "depth.png"))
-    colors = torch.cat((color_prev, color, color_post), dim=0)
-    save_image(colors, osp.join(savepath, "colors_norm.png"),nrow= 6)
-    images = torch.cat((prev_image, curr_image, post_image), dim=0)    
-    save_image(images, osp.join(savepath, "images.png"),nrow= 6)
-    warps = torch.cat((prev_warp_img, curr_image, post_warp_img), dim=0)    
-    save_image(warps, osp.join(savepath, "warps.png"),nrow= 6)
-    
+    if iteration % 100 == 0:
+        #save
+        save_depth = depth
+        savepath = osp.join(args.saverootpath, args.run_name)
+        if not osp.exists(savepath):
+            os.makedirs(savepath)
+        for i in range(inv_K.shape[0]):
+            save_depth[i] = depth[i]/ depth[i].max()
+        save_image(save_depth, osp.join(savepath, "depth.png"))
+        colors = torch.cat((color_prev, color, color_post), dim=0)
+        save_image(colors, osp.join(savepath, "colors_norm.png"),nrow= 6)
+        images = torch.cat((prev_image, curr_image, post_image), dim=0)    
+        save_image(images, osp.join(savepath, "images.png"),nrow= 6)
+        warps = torch.cat((prev_warp_img, curr_image, post_warp_img), dim=0)    
+        save_image(warps, osp.join(savepath, "warps.png"),nrow= 6)
+
     #return (reprojection_losses[0].mean()+reprojection_losses[1].mean())/2
 
     reprojection_losses = torch.cat(reprojection_losses, 1)
@@ -613,12 +614,12 @@ def train(args):
             elif "M" == args.depth_loss:
                 norm_image_seq = {'color':color, 'color_post': color_post, 'color_prev':color_prev} #network input
                 image_seq = {'curr_image':curr_image, 'post_image':post_image, 'prev_image':prev_image} #warp image
-                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp)
+                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, iteration)
                 depth_loss = reprojection_loss *10
             elif "MD" == args.depth_loss:
                 norm_image_seq = {'color':color, 'color_post': color_post, 'color_prev':color_prev} #network input
                 image_seq = {'curr_image':curr_image, 'post_image':post_image, 'prev_image':prev_image} #warp image
-                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp)
+                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, iteration)
                 depth_loss += reprojection_loss *10
 
             inputs = []

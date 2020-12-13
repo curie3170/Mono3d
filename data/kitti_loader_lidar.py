@@ -121,11 +121,7 @@ class KittiDataset_Fusion_stereo(Dataset):
         C, H, W = imgL.shape
         top_pad = 384 - H
         right_pad = 1248 - W
-        
-        #crkim
-        P = calib.P[:3,:3].astype(float)
-        P[0] *= 1248/W
-        P[1] *= 304/H #304
+       
         rand_idx = self.train_rand[data_idx]
         raw = self.train_mapping[int(rand_idx)-1].split(" ")
         curr_path = os.path.join(self.raw_dir, str(raw[0]+"/"+raw[1]+"/"), "image_02/data", raw[2] + ".jpg")
@@ -153,15 +149,18 @@ class KittiDataset_Fusion_stereo(Dataset):
             color = F.pad(color, (0, right_pad, top_pad, 0), "constant", 0)
             color_post = F.pad(color_post, (0, right_pad, top_pad, 0), "constant", 0)
             color_prev = F.pad(color_prev, (0, right_pad, top_pad, 0), "constant", 0)
+            '''
             curr_image = F.pad(curr_image, (0, right_pad, top_pad, 0), "constant", 0)
             post_image = F.pad(post_image, (0, right_pad, top_pad, 0), "constant", 0)
             prev_image = F.pad(prev_image, (0, right_pad, top_pad, 0), "constant", 0)
+            '''
         else:
             h_shift = imgL.shape[1] - self.crop_height
+            _, H_ori, _ = imgL.shape
             imgL = F.pad(imgL, (0, right_pad, 0, 0), "constant", 0)
             imgR = F.pad(imgR, (0, right_pad, 0, 0), "constant", 0)
             depth_map = F.pad(torch.Tensor(depth_map),
-                              (0, right_pad, 0, 0), "constant", -1)
+                              (0, right_pad, 0, 0), "constant", -1)             
             imgL = imgL[:,-self.crop_height:,:]
             imgR = imgR[:,-self.crop_height:,:]
             depth_map = depth_map[-self.crop_height:,:]
@@ -170,19 +169,19 @@ class KittiDataset_Fusion_stereo(Dataset):
             color = F.pad(color, (0, right_pad, 0, 0), "constant", 0)
             color_post = F.pad(color_post, (0, right_pad, 0, 0), "constant", 0)
             color_prev = F.pad(color_prev, (0, right_pad, 0, 0), "constant", 0)
+            '''
             curr_image = F.pad(curr_image, (0, right_pad, 0, 0), "constant", 0)
             post_image = F.pad(post_image, (0, right_pad, 0, 0), "constant", 0)
             prev_image = F.pad(prev_image, (0, right_pad, 0, 0), "constant", 0)
+            '''
             color = color[:,-self.crop_height:,:]
             color_post = color_post[:,-self.crop_height:,:]
             color_prev = color_prev[:,-self.crop_height:,:]
+            '''
             curr_image = curr_image[:,-self.crop_height:,:]
             post_image = post_image[:,-self.crop_height:,:]
             prev_image = prev_image[:,-self.crop_height:,:]
-        assert (color_post.shape == imgL.shape)
-        assert (color_prev.shape == imgL.shape)    
-        assert (post_image.shape == imgL.shape)
-        assert (prev_image.shape == imgL.shape)
+            '''
         if not self.only_feature:
             class_label, reg_label = \
                 get_labels(self.dataset, data_idx,
@@ -205,11 +204,28 @@ class KittiDataset_Fusion_stereo(Dataset):
         color = F.interpolate(color.unsqueeze(dim=0), size=(192,640)).squeeze(0)
         color_post = F.interpolate(color_post.unsqueeze(dim=0), size=(192,640)).squeeze(0)
         color_prev = F.interpolate(color_prev.unsqueeze(dim=0), size=(192,640)).squeeze(0)
-
+        
         curr_image = F.interpolate(curr_image.unsqueeze(dim=0), size=(192,640)).squeeze(0)
         post_image = F.interpolate(post_image.unsqueeze(dim=0), size=(192,640)).squeeze(0)
         prev_image = F.interpolate(prev_image.unsqueeze(dim=0), size=(192,640)).squeeze(0)
-
+        
+        #crkim
+        P = np.array(calib.P[:3,:3],dtype=np.float32)
+        P[0] *= 640 / W
+        P[1] *= 192 / H_ori
+        '''
+        P =np.array([[0.58, 0, 0.5],
+                    [0, 1.92, 0.5],
+                    [0, 0, 1]],dtype=np.float32)
+        #print(P)
+        P[0, 0] *= 1248/W 
+        P[1, 1] *= H/H_ori #304
+        P[1, 2] = H - P[1, 2] 
+        #print(P)
+        '''  
+        assert( P.shape == (3,3))
+        assert (curr_image.shape == post_image.shape)  
+        assert (curr_image.shape == prev_image.shape) 
         if self.only_feature:
             return {'color': color,'imgL': imgL, 'imgR': imgR, 'f': f, 'depth_map': depth_map,
                     'idx': data_idx,
