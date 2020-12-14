@@ -678,7 +678,7 @@ def train(args):
         logger.info("Finish epoch {}, time elapsed {:.3f} s".format(
             epoch, time.time() - ts))
 
-        if epoch % args.eval_every_epoch == 0 and epoch >= args.start_eval:
+        if (epoch+1) % args.eval_every_epoch == 0 and epoch >= args.start_eval:
             logger.info("Evaluation begins at epoch {}".format(epoch))
             evaluate(eval_data, eval_loader, pixor,encoder, depth_decoder,
                      args.batch_size, gpu=use_gpu, logger=logger,
@@ -703,17 +703,28 @@ def train(args):
 
         if epoch % args.save_every == 0:
             saveto = osp.join(savepath, "checkpoint_{}.pth.tar".format(epoch))
-            torch.save({'state_dict': pixor.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'scheduler': scheduler.state_dict(),
-                        'encoder_state_dict': encoder.state_dict(),
-                        'depth_state_dict': depth_decoder.state_dict(),
-                        'pose_encoder_dict': pose_encoder.state_dict(),
-                        'pose_decoder_dict': pose_decoder.state_dict(),
-                        'depth_optimizer': depth_optimizer.state_dict(),
-                        'depth_scheduler': depth_scheduler.state_dict(),
-                        'epoch': epoch
-                        }, saveto)
+            if "M" in args.depth_loss:
+                torch.save({'state_dict': pixor.state_dict(),
+                            'optimizer': optimizer.state_dict(),
+                            'scheduler': scheduler.state_dict(),
+                            'encoder_state_dict': encoder.state_dict(),
+                            'depth_state_dict': depth_decoder.state_dict(),
+                            'pose_encoder_dict': pose_encoder.state_dict(),
+                            'pose_decoder_dict': pose_decoder.state_dict(),
+                            'depth_optimizer': depth_optimizer.state_dict(),
+                            'depth_scheduler': depth_scheduler.state_dict(),
+                            'epoch': epoch
+                            }, saveto)
+            else:
+                torch.save({'state_dict': pixor.state_dict(),
+                            'optimizer': optimizer.state_dict(),
+                            'scheduler': scheduler.state_dict(),
+                            'encoder_state_dict': encoder.state_dict(),
+                            'depth_state_dict': depth_decoder.state_dict(),
+                            'depth_optimizer': depth_optimizer.state_dict(),
+                            'depth_scheduler': depth_scheduler.state_dict(),
+                            'epoch': epoch
+                            }, saveto)
             logger.info("model saved to {}".format(saveto))
             symlink_force(saveto, osp.join(savepath, "checkpoint.pth.tar"))
 
@@ -802,7 +813,7 @@ def evaluate(dataset, data_loader, model, encoder, depth_decoder, batch_size, gp
                     class_outs, reg_outs = pixor(inputs, images,
                                                  img_index, bev_index)
                 else:
-                    depth_loss, depth_map = forward_monodepth_model(imgL, color, depth_map, test_metric, depth_decoder, encoder,  'test')
+                    depth_loss, depth_map, _ = forward_monodepth_model(imgL, color, depth_map, test_metric, depth_decoder, encoder,  'test')
                     inputs = []
                     for i in range(depth_map.shape[0]):
                         calib = utils_func.torchCalib(
@@ -812,7 +823,7 @@ def evaluate(dataset, data_loader, model, encoder, depth_decoder, batch_size, gp
 
                         #crkim
                         save_depth = np.uint16(depth.clone().cpu().numpy()*256)
-                        save_path = os.path.join(args.saverootpath, args.run_name,"pred_depth")
+                        save_path = os.path.join(args.saverootpath, args.run_name,"pred_depth_"+str(epoch))
                         if not osp.exists(save_path):
                             os.makedirs(save_path)
                         save_path = os.path.join(save_path,"{:06d}.png".format(idxx[i]))
@@ -823,7 +834,7 @@ def evaluate(dataset, data_loader, model, encoder, depth_decoder, batch_size, gp
                         ptc_np = ptc_np.astype(np.float32)
 
                         #crkim
-                        save_path = os.path.join(args.saverootpath, args.run_name, "pred_velodyne")
+                        save_path = os.path.join(args.saverootpath, args.run_name, "pred_velodyne_"+str(epoch))
                         if not osp.exists(save_path):
                             os.makedirs(save_path)
                         save_path = os.path.join(save_path, "{:06d}.bin".format(idxx[i]))
@@ -979,7 +990,7 @@ if __name__ == "__main__":
         encoder = nn.DataParallel(encoder).cuda()
         parameters_to_train += list(encoder.parameters())
 
-        depth_decoder = networks.DepthDecoder(encoder.num_ch_enc)
+        depth_decoder = networks.DepthDecoder(encoder.module.num_ch_enc)
         depth_decoder = depth_decoder.cuda()
         depth_decoder = nn.DataParallel(depth_decoder).cuda()
         parameters_to_train += list(depth_decoder.parameters())

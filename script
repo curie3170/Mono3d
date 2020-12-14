@@ -8,4 +8,13 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e.py -c configs/fusion.cfg --r
 
 CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_ori.py -c configs/fusion.cfg --run_name PSM+PIXOR --mode eval --eval_ckpt /media/curie/mono3d/saves/PSM+PIXOR/checkpoint_14.pth.tar --root_dir  ~/dataset/kitti_3d
 
+
+#train unsupervised model
 CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.cfg --root_dir ~/dataset/kitti_3d --pixor_pretrain ./pretrained_weights/pixor_checkpoint.pth.tar --depth_pretrain ./pretrained_weights/mono_640x192 --depth_loss M --run_name unsup_Monodepth+PIXOR
+#train unsupervised model resume
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.cfg --root_dir ~/dataset/kitti_3d --checkpoint /media/curie/mono3d/saves/unsup_Monodepth+PIXOR/checkpoint_14.pth.tar --depth_loss M --run_name unsup_Monodepth+PIXOR --resume --epochs 20
+#eval unsupervised model
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.cfg --run_name unsup_Monodepth+PIXOR --mode eval --eval_ckpt /media/curie/mono3d/saves/unsup_Monodepth+PIXOR/checkpoint_14.pth.tar --root_dir  ~/dataset/kitti_3d --depth_loss M
+
+#train unsupervised+supervised model
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.cfg --root_dir ~/dataset/kitti_3d --pixor_pretrain ./pretrained_weights/pixor_checkpoint.pth.tar --depth_pretrain ./pretrained_weights/mono_640x192 --depth_loss MD --run_name unsup+sup_Monodepth+PIXOR

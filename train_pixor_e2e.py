@@ -519,7 +519,7 @@ def train(args):
         logger.info("Finish epoch {}, time elapsed {:.3f} s".format(
             epoch, time.time() - ts))
 
-        if epoch % args.eval_every_epoch == 0 and epoch >= args.start_eval:
+        if (epoch+1) % args.eval_every_epoch == 0 and epoch >= args.start_eval:
             logger.info("Evaluation begins at epoch {}".format(epoch))
             evaluate(eval_data, eval_loader, pixor,encoder, depth_decoder,
                      args.batch_size, gpu=use_gpu, logger=logger,
