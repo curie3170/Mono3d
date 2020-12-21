@@ -80,6 +80,8 @@ def parse_args():
 
     parser.add_argument('--root_dir', type=str,
         default="/scratch/datasets/KITTI/object")
+    parser.add_argument('--raw_dir', type=str,
+        default="/root/dataset/kitti_raw")    
     parser.add_argument('--train_label_dir', type=str, default='label_2')
     parser.add_argument('--eval_label_dir', type=str, default='label_2')
     parser.add_argument('--train_calib_dir', type=str, default='calib')
@@ -234,6 +236,7 @@ def get_eval_dataset(args):
                                     calib_dir=args.eval_calib_dir,
                                     image_dir=args.eval_image_dir,
                                     root_dir=args.root_dir,
+                                    raw_dir = args.raw_dir,# crkim "/root/dataset/kitti_raw"
                                     only_feature=args.no_cal_loss,
                                     split=args.split,
                                     image_downscale=args.image_downscale,
@@ -308,6 +311,7 @@ def train(args):
         calib_dir=args.eval_calib_dir,
         image_dir=args.eval_image_dir,
         root_dir=args.root_dir,
+         raw_dir = args.raw_dir, #crkim
         only_feature=args.no_cal_loss,
         split=args.split,
         image_downscale=args.image_downscale,
@@ -517,7 +521,7 @@ def train(args):
         logger.info("Finish epoch {}, time elapsed {:.3f} s".format(
             epoch, time.time() - ts))
 
-        if epoch % args.eval_every_epoch == 0 and epoch >= args.start_eval:
+        if (epoch+1) % args.eval_every_epoch == 0 and epoch >= args.start_eval:
             logger.info("Evaluation begins at epoch {}".format(epoch))
             evaluate(eval_data, eval_loader, pixor,encoder, depth_decoder,
                      args.batch_size, gpu=use_gpu, logger=logger,
@@ -851,7 +855,13 @@ if __name__ == "__main__":
                     #decoder_path = os.path.join(args.depth_pretrain, "depth.pth")
                     encoder_dict = torch.load(encoder_path)
                     encoder.load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
-                    depth_decoder.load_state_dict(torch.load(decoder_path))
+                    decoder_dict = torch.load(decoder_path)
+                    key_list = list(decoder_dict.keys())
+                    new_key_list = list(depth_decoder.state_dict().keys())
+                    new_key_map = {kl: nkl for kl, nkl in zip(key_list, new_key_list)}
+                    decoder_dict = {new_key_map[k]: v for k, v in decoder_dict.items()}
+                    depth_decoder.load_state_dict(decoder_dict)
+                    #depth_decoder.load_state_dict(torch.load(decoder_path))
                     '''
                     checkpoint = torch.load(args.depth_pretrain)
                     depth_model.load_state_dict(checkpoint['state_dict'])
