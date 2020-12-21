@@ -366,12 +366,14 @@ def train(args):
                 args.depth_pretrain))
 
             encoder_dict = torch.load(encoder_path)
-            encoder_dict = {'module.'+k: v for k, v in encoder_dict.items() if k not in ['height', 'width', 'use_stereo']}
-            encoder.load_state_dict(encoder_dict)
+            encoder_dict = {'module.'+k: v for k, v in encoder_dict.items()}  # if k not in ['height', 'width', 'use_stereo']}
+            encoder.load_state_dict(encoder_dict, strict=False)
             decoder_dict = torch.load(decoder_path)
-            # decoder_dict = {'module.'+k: v for k, v in decoder_dict.items()}
-            # decoder_dict = {k: v for k, v in decoder_dict.items()}
-            # depth_decoder.load_state_dict(decoder_dict, strict=False)
+            key_list = list(decoder_dict.keys())
+            new_key_list = list(depth_decoder.state_dict().keys())
+            new_key_map = {kl: nkl for kl, nkl in zip(key_list, new_key_list)}
+            decoder_dict = {new_key_map[k]: v for k, v in decoder_dict.items()}
+            depth_decoder.load_state_dict(decoder_dict)
 
         else:
             logger.info(
