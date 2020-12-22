@@ -342,6 +342,7 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         save_image(images, osp.join(savepath, "images.png"),nrow= 6)
         warps = torch.cat((prev_warp_img, curr_image, post_warp_img), dim=0)    
         save_image(warps, osp.join(savepath, "warps.png"),nrow= 6)
+        save_image(mask.unsqueeze(1).int()*1.1, osp.join(savepath, "masks.png"),nrow= 6)
 
     #return (reprojection_losses[0].mean()+reprojection_losses[1].mean())/2
     
@@ -356,8 +357,10 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
     identity_reprojection_loss += torch.randn(identity_reprojection_loss.shape).cuda() * 0.00001
     combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)
     to_optimise, idxs = torch.min(combined, dim=1)    #min loss
-
-    loss += to_optimise[mask].mean()
+    if args.depth_loss == "MD" :
+        loss += to_optimise[mask].mean()
+    else: 
+        loss += to_optimise.mean()
     mean_disp = disp.mean(2, True).mean(3, True)
     norm_disp = disp / (mean_disp + 1e-7)
     smooth_loss = get_smooth_loss(norm_disp, color)
