@@ -264,7 +264,7 @@ def forward_monodepth_model(imgL, color, depth, metric_log, depth_model, encoder
     pred_depth[pred_depth > MAX_DEPTH] = MAX_DEPTH
     loss = F.smooth_l1_loss(pred_depth[mask], depth[mask], size_average=True)
     metric_log.calculate(depth, pred_depth, loss=loss.item())
-    return loss, pred_depth, disp
+    return loss, pred_depth, disp, mask
 
 def compute_reprojection_loss(target, pred):
     abs_diff = torch.abs(target - pred)
@@ -275,7 +275,7 @@ def compute_reprojection_loss(target, pred):
     return reprojection_loss
 
 
-def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, iteration):
+def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, iteration, mask):
     """Predict poses between input frames for monocular sequences.
     """
     color = norm_image_seq['color']# b*1*192*640
@@ -294,7 +294,7 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         min_depth = 0.1  # while training
         max_depth = 100
         _, depth = disp_to_depth(disp, min_depth, max_depth) # b*1*192*640
-        #depth = F.interpolate(depth, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
+        depth = F.interpolate(depth, size=(mask.shape[1], mask.shape[2]), mode="bilinear", align_corners=False)
         #depth *= MONO_SCALE_FACTOR
         #depth[depth < MIN_DEPTH] = MIN_DEPTH
         #depth[depth > MAX_DEPTH] = MAX_DEPTH
@@ -302,11 +302,7 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         K = intrinsic.float()
         inv_K = torch.inverse(K)
 
-        if not color.shape[2:] == depth.shape[2:]:
-            print (color.shape[2:])
-            print (color_prev.shape[2:])
-            print (color_post.shape[2:])
-        _, _, h, w = depth.shape 
+        _, h, w = mask.shape 
 
         backproject_depth = BackprojectDepth(inv_K.shape[0], h, w).cuda()
         project_3d = Project3D(inv_K.shape[0], h, w).cuda()
@@ -330,6 +326,7 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         else:
             post_image = adjacent_img
             post_warp_img = warped_img
+
     if iteration % 100 == 0:
         #save
         save_depth = depth
@@ -347,7 +344,7 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         save_image(warps, osp.join(savepath, "warps.png"),nrow= 6)
 
     #return (reprojection_losses[0].mean()+reprojection_losses[1].mean())/2
-
+    
     reprojection_losses = torch.cat(reprojection_losses, 1)
     identity_reprojection_losses = []
     for img_seq in ([[image_seq['prev_image'], image_seq['curr_image']], [image_seq['curr_image'], image_seq['post_image']]]):
@@ -359,8 +356,8 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
     identity_reprojection_loss += torch.randn(identity_reprojection_loss.shape).cuda() * 0.00001
     combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)
     to_optimise, idxs = torch.min(combined, dim=1)    #min loss
-    loss += to_optimise.mean()
 
+    loss += to_optimise[mask].mean()
     mean_disp = disp.mean(2, True).mean(3, True)
     norm_disp = disp / (mean_disp + 1e-7)
     smooth_loss = get_smooth_loss(norm_disp, color)
@@ -607,19 +604,19 @@ def train(args):
 
             class_labels = batch['cl'].cuda()
             reg_labels = batch['rl'].cuda()
-            depth_loss, depth_map, disp = forward_monodepth_model(imgL, color, depth_map, train_metric, depth_decoder, encoder,mode='TRAIN')
+            depth_loss, depth_map, disp, mask = forward_monodepth_model(imgL, color, depth_map, train_metric, depth_decoder, encoder,mode='TRAIN')
            
             if "D" == args.depth_loss:
                 depth_loss = depth_loss
             elif "M" == args.depth_loss:
                 norm_image_seq = {'color':color, 'color_post': color_post, 'color_prev':color_prev} #network input
                 image_seq = {'curr_image':curr_image, 'post_image':post_image, 'prev_image':prev_image} #warp image
-                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, iteration)
+                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, iteration, mask)
                 depth_loss = reprojection_loss *10
             elif "MD" == args.depth_loss:
                 norm_image_seq = {'color':color, 'color_post': color_post, 'color_prev':color_prev} #network input
                 image_seq = {'curr_image':curr_image, 'post_image':post_image, 'prev_image':prev_image} #warp image
-                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, iteration)
+                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, iteration, mask)
                 depth_loss += reprojection_loss *10
 
             inputs = []
@@ -813,7 +810,7 @@ def evaluate(dataset, data_loader, model, encoder, depth_decoder, batch_size, gp
                     class_outs, reg_outs = pixor(inputs, images,
                                                  img_index, bev_index)
                 else:
-                    depth_loss, depth_map, _ = forward_monodepth_model(imgL, color, depth_map, test_metric, depth_decoder, encoder,  'test')
+                    depth_loss, depth_map, _, _ = forward_monodepth_model(imgL, color, depth_map, test_metric, depth_decoder, encoder,  'test')
                     inputs = []
                     for i in range(depth_map.shape[0]):
                         calib = utils_func.torchCalib(

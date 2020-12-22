@@ -169,19 +169,19 @@ class KittiDataset_Fusion_stereo(Dataset):
             color = F.pad(color, (0, right_pad, 0, 0), "constant", 0)
             color_post = F.pad(color_post, (0, right_pad, 0, 0), "constant", 0)
             color_prev = F.pad(color_prev, (0, right_pad, 0, 0), "constant", 0)
-            '''
+            
             curr_image = F.pad(curr_image, (0, right_pad, 0, 0), "constant", 0)
             post_image = F.pad(post_image, (0, right_pad, 0, 0), "constant", 0)
             prev_image = F.pad(prev_image, (0, right_pad, 0, 0), "constant", 0)
-            '''
+            
             color = color[:,-self.crop_height:,:]
             color_post = color_post[:,-self.crop_height:,:]
             color_prev = color_prev[:,-self.crop_height:,:]
-            '''
+            
             curr_image = curr_image[:,-self.crop_height:,:]
             post_image = post_image[:,-self.crop_height:,:]
             prev_image = prev_image[:,-self.crop_height:,:]
-            '''
+            
         if not self.only_feature:
             class_label, reg_label = \
                 get_labels(self.dataset, data_idx,
@@ -204,15 +204,15 @@ class KittiDataset_Fusion_stereo(Dataset):
         color = F.interpolate(color.unsqueeze(dim=0), size=(192,640)).squeeze(0)
         color_post = F.interpolate(color_post.unsqueeze(dim=0), size=(192,640)).squeeze(0)
         color_prev = F.interpolate(color_prev.unsqueeze(dim=0), size=(192,640)).squeeze(0)
-        
+        '''
         curr_image = F.interpolate(curr_image.unsqueeze(dim=0), size=(192,640)).squeeze(0)
         post_image = F.interpolate(post_image.unsqueeze(dim=0), size=(192,640)).squeeze(0)
         prev_image = F.interpolate(prev_image.unsqueeze(dim=0), size=(192,640)).squeeze(0)
-        
+        '''
         #crkim
         P = np.array(calib.P[:3,:3],dtype=np.float32)
-        P[0] *= 640 / W
-        P[1] *= 192 / H_ori
+        #P[0] *= 640 / W
+        #P[1] *= 192 / H_ori
         '''
         P =np.array([[0.58, 0, 0.5],
                     [0, 1.92, 0.5],
