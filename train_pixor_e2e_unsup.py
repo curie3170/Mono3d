@@ -358,7 +358,7 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
     combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)
     to_optimise, idxs = torch.min(combined, dim=1)    #min loss
     if args.depth_loss == "MD" :
-        loss += to_optimise[mask].mean()
+        loss += to_optimise[~mask].mean()
     else: 
         loss += to_optimise.mean()
     mean_disp = disp.mean(2, True).mean(3, True)
