@@ -17,7 +17,7 @@ kitti_vis
     __pycache__
 ```
 
-## Dependency Setting
+## Environment Setting
 - start from a new conda enviornment:
 ```
 (base) $ conda create -n kitti_vis python=3.7 # vtk does not support python 3.8
