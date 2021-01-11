@@ -248,6 +248,8 @@ def get_eval_dataset(args):
 
 
 def forward_monodepth_model(imgL, color, depth, metric_log, depth_model, encoder_model, mode='TRAIN'):
+    #_, _, h, w = color.shape #6*3*192*640
+    #depth = F.interpolate(depth.unsqueeze(1), size=(h, w), mode="bilinear", align_corners=False).squeeze(1)
     # ---------
     mask = (depth >= 1) * (depth <= 80)
     mask.detach_()
@@ -256,12 +258,49 @@ def forward_monodepth_model(imgL, color, depth, metric_log, depth_model, encoder
     # ----
     disp = depth_model(encoder_model(color))[-1]
     # pred_disp, _ = disp_to_depth(output[("disp", 0)], min_depth, max_depth)
+    
+    ###########pred_depth is 1/disp * 31, 1~80
+    '''
     pred_disp, _ = disp_to_depth(disp, min_depth, max_depth)
     pred_disp = F.interpolate(pred_disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
     pred_depth = 1 / pred_disp
     pred_depth *= MONO_SCALE_FACTOR
     pred_depth[pred_depth < MIN_DEPTH] = MIN_DEPTH
     pred_depth[pred_depth > MAX_DEPTH] = MAX_DEPTH
+    '''
+
+    ###########pred_depth is 1/disp
+    '''
+    pred_disp = F.interpolate(disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
+    pred_depth = 1 / pred_disp.squeeze(1)
+    '''
+
+    ###########pred_depth is 1/disp, clamp[0.001~80] 
+    '''
+    pred_disp = F.interpolate(disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
+    pred_depth = 1 / pred_disp.squeeze(1)
+    pred_depth[pred_depth < MIN_DEPTH] = MIN_DEPTH
+    pred_depth[pred_depth > MAX_DEPTH] = MAX_DEPTH
+    '''
+    ###########pred_depth is 1/disp, 0.1~100 scale
+    pred_disp, _ = disp_to_depth(disp, min_depth, max_depth)
+    pred_disp = F.interpolate(pred_disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
+    pred_depth = 1 / pred_disp.squeeze(1)
+    
+    ###########pred_depth is 1/disp, 0.1~100 scale, clamp[0.001~80]  
+    '''
+    pred_disp, _ = disp_to_depth(disp, min_depth, max_depth)
+    pred_disp = F.interpolate(disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
+    pred_depth = 1 / pred_disp.squeeze(1)
+    pred_depth[pred_depth < MIN_DEPTH] = MIN_DEPTH
+    pred_depth[pred_depth > MAX_DEPTH] = MAX_DEPTH
+    '''
+    ###########pred_depth is log(exp(disp)+1), without sigmoid
+    '''
+    pred_disp = F.interpolate(disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
+    pred_depth = torch.log(torch.exp(pred_disp)+1).squeeze(1)
+    '''
+
     loss = F.smooth_l1_loss(pred_depth[mask], depth[mask], size_average=True)
     metric_log.calculate(depth, pred_depth, loss=loss.item())
     return loss, pred_depth, disp, mask
@@ -294,7 +333,7 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         min_depth = 0.1  # while training
         max_depth = 100
         _, depth = disp_to_depth(disp, min_depth, max_depth) # b*1*192*640
-        depth = F.interpolate(depth, size=(mask.shape[1], mask.shape[2]), mode="bilinear", align_corners=False)
+        #depth = F.interpolate(depth, size=(mask.shape[1], mask.shape[2]), mode="bilinear", align_corners=False)
         #depth *= MONO_SCALE_FACTOR
         #depth[depth < MIN_DEPTH] = MIN_DEPTH
         #depth[depth > MAX_DEPTH] = MAX_DEPTH
@@ -302,7 +341,7 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         K = intrinsic.float()
         inv_K = torch.inverse(K)
 
-        _, h, w = mask.shape 
+        _, _, h, w = mask.shape 
 
         backproject_depth = BackprojectDepth(inv_K.shape[0], h, w).cuda()
         project_3d = Project3D(inv_K.shape[0], h, w).cuda()
@@ -318,8 +357,6 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         """
         reprojection_loss = compute_reprojection_loss(curr_image, warped_img)
         reprojection_losses.append(reprojection_loss)
-
-        
         if idx == 0:
             prev_image = adjacent_img
             prev_warp_img = warped_img
@@ -342,7 +379,7 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         save_image(images, osp.join(savepath, "images.png"),nrow= 6)
         warps = torch.cat((prev_warp_img, curr_image, post_warp_img), dim=0)    
         save_image(warps, osp.join(savepath, "warps.png"),nrow= 6)
-        save_image(mask.unsqueeze(1).int()*1.1, osp.join(savepath, "masks.png"),nrow= 6)
+        save_image(mask.int()*1.1, osp.join(savepath, "masks.png"),nrow= 6)
 
     #return (reprojection_losses[0].mean()+reprojection_losses[1].mean())/2
     
@@ -627,6 +664,7 @@ def train(args):
                 calib = utils_func.torchCalib(
                     train_data.dataset.get_calibration(idxx[i]), h_shift[i])
                 H, W = ori_shape[0][i], ori_shape[1][i]
+               
                 depth = depth_map[i][-H:, :W]
                 ptc = depth_to_pcl(calib, depth, max_high=1.)
                 ptc = calib.lidar_to_rect(ptc[:, 0:3])
@@ -819,7 +857,9 @@ def evaluate(dataset, data_loader, model, encoder, depth_decoder, batch_size, gp
                         calib = utils_func.torchCalib(
                             dataset.dataset.get_calibration(idxx[i]), h_shift[i])
                         H, W = ori_shape[0][i], ori_shape[1][i]
+                        
                         depth = depth_map[i][-H:, :W]
+
 
                         #crkim
                         save_depth = np.uint16(depth.clone().cpu().numpy()*256)

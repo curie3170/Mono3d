@@ -18,3 +18,16 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.c
 
 #train unsupervised+supervised model
 CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.cfg --root_dir ~/dataset/kitti_3d --pixor_pretrain ./pretrained_weights/pixor_checkpoint.pth.tar --depth_pretrain ./pretrained_weights/mono_640x192 --depth_loss MD --run_name unsup+sup_Monodepth+PIXOR
+
+#evaluate monodepth2+PIXOR depth
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.cfg --run_name pretrained_Monodepth_pixor --mode eval --root_dir  ~/dataset/kitti_3d 
+
+#train supervised model, 1/disp, , 0.1~100 scale, *32, clamp[0.001~80]  
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.cfg --root_dir ~/dataset/kitti_3d --pixor_pretrain ./pretrained_weights/pixor_checkpoint.pth.tar --depth_pretrain ./pretrained_weights/mono_640x192 --depth_loss D --run_name Final
+
+#train supervised model, 1/disp
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.cfg --root_dir ~/dataset/kitti_3d --pixor_pretrain ./pretrained_weights/pixor_checkpoint.pth.tar --depth_pretrain ./pretrained_weights/mono_640x192 --depth_loss D --run_name sup_Monodepth+PIXOR_one_over_disp
+#train supervised model, pred_depth is 1/disp, 0.1~100 scale
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.cfg --root_dir ~/dataset/kitti_3d --pixor_pretrain ./pretrained_weights/pixor_checkpoint.pth.tar --depth_pretrain ./pretrained_weights/mono_640x192 --depth_loss D --run_name sup_Monodepth+PIXOR_one_over_disp_scale
+#train supervised model, pred_depth is 1/disp, 0.1~100 scale, clamp[0.001~80]  
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.cfg --root_dir ~/dataset/kitti_3d --pixor_pretrain ./pretrained_weights/pixor_checkpoint.pth.tar --depth_pretrain ./pretrained_weights/mono_640x192 --depth_loss D --run_name sup_Monodepth+PIXOR_one_over_disp_scale_clamp

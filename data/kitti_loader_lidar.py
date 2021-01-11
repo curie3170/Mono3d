@@ -149,14 +149,14 @@ class KittiDataset_Fusion_stereo(Dataset):
             color = F.pad(color, (0, right_pad, top_pad, 0), "constant", 0)
             color_post = F.pad(color_post, (0, right_pad, top_pad, 0), "constant", 0)
             color_prev = F.pad(color_prev, (0, right_pad, top_pad, 0), "constant", 0)
-            '''
+            
             curr_image = F.pad(curr_image, (0, right_pad, top_pad, 0), "constant", 0)
             post_image = F.pad(post_image, (0, right_pad, top_pad, 0), "constant", 0)
             prev_image = F.pad(prev_image, (0, right_pad, top_pad, 0), "constant", 0)
-            '''
+            
         else:
             h_shift = imgL.shape[1] - self.crop_height
-            _, H_ori, _ = imgL.shape
+            _, H_ori, W_ori = imgL.shape
             imgL = F.pad(imgL, (0, right_pad, 0, 0), "constant", 0)
             imgR = F.pad(imgR, (0, right_pad, 0, 0), "constant", 0)
             depth_map = F.pad(torch.Tensor(depth_map),
@@ -211,8 +211,14 @@ class KittiDataset_Fusion_stereo(Dataset):
         '''
         #crkim
         P = np.array(calib.P[:3,:3],dtype=np.float32)
-        #P[0] *= 640 / W
-        #P[1] *= 192 / H_ori
+        P[1, 2] = P[1, 2] - (H_ori - H)
+
+        '''
+        P = np.array(calib.P[:3,:3],dtype=np.float32)
+        P[1, 2] = P[1, 2] - (H_ori - H)
+        P[0] *= 640 / W
+        P[1] *= 192 / H
+        '''
         '''
         P =np.array([[0.58, 0, 0.5],
                     [0, 1.92, 0.5],
