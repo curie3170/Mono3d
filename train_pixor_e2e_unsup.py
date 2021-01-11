@@ -333,15 +333,16 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         min_depth = 0.1  # while training
         max_depth = 100
         _, depth = disp_to_depth(disp, min_depth, max_depth) # b*1*192*640
-        #depth = F.interpolate(depth, size=(mask.shape[1], mask.shape[2]), mode="bilinear", align_corners=False)
+        depth = F.interpolate(depth, size=(mask.shape[1], mask.shape[2]), mode="bilinear", align_corners=False).squeeze(1)
         #depth *= MONO_SCALE_FACTOR
         #depth[depth < MIN_DEPTH] = MIN_DEPTH
         #depth[depth > MAX_DEPTH] = MAX_DEPTH
 
         K = intrinsic.float()
         inv_K = torch.inverse(K)
+        import pdb; pdb.set_trace()
 
-        _, _, h, w = mask.shape 
+        _, h, w = mask.shape 
 
         backproject_depth = BackprojectDepth(inv_K.shape[0], h, w).cuda()
         project_3d = Project3D(inv_K.shape[0], h, w).cuda()
