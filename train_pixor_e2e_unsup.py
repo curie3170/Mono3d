@@ -579,8 +579,9 @@ def train(args):
 
             encoder.load_state_dict(checkpoint['encoder_state_dict'])
             depth_decoder.load_state_dict(checkpoint['depth_state_dict'])
-            pose_encoder.load_state_dict(checkpoint['pose_encoder_dict'])
-            pose_decoder.load_state_dict(checkpoint['pose_decoder_dict'])
+            if "M" in args.depth_loss:
+                pose_encoder.load_state_dict(checkpoint['pose_encoder_dict'])
+                pose_decoder.load_state_dict(checkpoint['pose_decoder_dict'])
             '''
             depth_model.load_state_dict(checkpoint['depth_state_dict'])
             depth_optimizer.load_state_dict(checkpoint['depth_optimizer'])
