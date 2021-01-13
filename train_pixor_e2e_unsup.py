@@ -260,22 +260,24 @@ def forward_monodepth_model(imgL, color, depth, metric_log, depth_model, encoder
     # pred_disp, _ = disp_to_depth(output[("disp", 0)], min_depth, max_depth)
     
     ###########pred_depth is 1/disp * 31, 1~80
-    '''
+    #sup_Monodepth+PIXOR_31_clamp
     pred_disp, _ = disp_to_depth(disp, min_depth, max_depth)
     pred_disp = F.interpolate(pred_disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
     pred_depth = 1 / pred_disp
     pred_depth *= MONO_SCALE_FACTOR
     pred_depth[pred_depth < MIN_DEPTH] = MIN_DEPTH
     pred_depth[pred_depth > MAX_DEPTH] = MAX_DEPTH
-    '''
+
 
     ###########pred_depth is 1/disp
+    #sup_Monodepth+PIXOR_one_over_disp
     '''
     pred_disp = F.interpolate(disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
     pred_depth = 1 / pred_disp.squeeze(1)
     '''
 
     ###########pred_depth is 1/disp, clamp[0.001~80] 
+    #sup_Monodepth+PIXOR_one_over_disp_clamp
     '''
     pred_disp = F.interpolate(disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
     pred_depth = 1 / pred_disp.squeeze(1)
@@ -283,18 +285,22 @@ def forward_monodepth_model(imgL, color, depth, metric_log, depth_model, encoder
     pred_depth[pred_depth > MAX_DEPTH] = MAX_DEPTH
     '''
     ###########pred_depth is 1/disp, 0.1~100 scale
+    #sup_Monodepth+PIXOR_one_over_disp_scale
+    '''
     pred_disp, _ = disp_to_depth(disp, min_depth, max_depth)
     pred_disp = F.interpolate(pred_disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
     pred_depth = 1 / pred_disp.squeeze(1)
+    '''
     
     ###########pred_depth is 1/disp, 0.1~100 scale, clamp[0.001~80]  
-    '''
+    #sup_Monodepth+PIXOR_one_over_disp_scale_clamp
+    ''''
     pred_disp, _ = disp_to_depth(disp, min_depth, max_depth)
     pred_disp = F.interpolate(disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
     pred_depth = 1 / pred_disp.squeeze(1)
     pred_depth[pred_depth < MIN_DEPTH] = MIN_DEPTH
     pred_depth[pred_depth > MAX_DEPTH] = MAX_DEPTH
-    '''
+    '''    
     ###########pred_depth is log(exp(disp)+1), without sigmoid
     '''
     pred_disp = F.interpolate(disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
