@@ -100,5 +100,6 @@ class DepthDecoder(nn.Module):
         x = torch.cat(x, 1)
         x = self.upconv_0_1(x)
         self.outputs.append(self.sigmoid(self.dispconv_0(x)))
+        #self.outputs.append(self.dispconv_0(x))
 
         return self.outputs
