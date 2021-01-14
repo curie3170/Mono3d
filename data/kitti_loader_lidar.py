@@ -211,8 +211,7 @@ class KittiDataset_Fusion_stereo(Dataset):
         '''
         #crkim
         P = np.array(calib.P[:3,:3],dtype=np.float32)
-        P[1, 2] = P[1, 2] - (H_ori - H)
-
+        P[1, 2] = P[1, 2] - h_shift
         '''
         P = np.array(calib.P[:3,:3],dtype=np.float32)
         P[1, 2] = P[1, 2] - (H_ori - H)

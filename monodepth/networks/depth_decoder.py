@@ -75,6 +75,7 @@ class DepthDecoder(nn.Module):
         x = self.upconv_3_1(x)
         if 3 in self.scales:
             self.outputs.append(self.sigmoid(self.dispconv_3(x)))
+            
         
         x = self.upconv_2_0(x)
         x = [upsample(x)]
