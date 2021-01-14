@@ -81,7 +81,7 @@ def parse_args():
     parser.add_argument('--root_dir', type=str,
         default="/scratch/datasets/KITTI/object")
     parser.add_argument('--raw_dir', type=str,
-        default="/root/dataset/kitti_raw1")    
+        default="/root/dataset/kitti_raw1")    a
     parser.add_argument('--train_label_dir', type=str, default='label_2')
     parser.add_argument('--eval_label_dir', type=str, default='label_2')
     parser.add_argument('--train_calib_dir', type=str, default='calib')
@@ -260,6 +260,15 @@ def forward_monodepth_model(imgL, color, depth, metric_log, depth_model, encoder
     # pred_disp, _ = disp_to_depth(output[("disp", 0)], min_depth, max_depth)
     
     ###########pred_depth is 1/disp * 31, 1~80
+    #sup_Monodepth+PIXOR_31
+    '''
+    pred_disp, _ = disp_to_depth(disp, min_depth, max_depth)
+    pred_disp = F.interpolate(pred_disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
+    pred_depth = 1 / pred_disp
+    pred_depth *= MONO_SCALE_FACTOR
+    '''
+
+    ###########pred_depth is 1/disp * 31, 1~80
     #sup_Monodepth+PIXOR_31_clamp
     pred_disp, _ = disp_to_depth(disp, min_depth, max_depth)
     pred_disp = F.interpolate(pred_disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
@@ -267,7 +276,7 @@ def forward_monodepth_model(imgL, color, depth, metric_log, depth_model, encoder
     pred_depth *= MONO_SCALE_FACTOR
     pred_depth[pred_depth < MIN_DEPTH] = MIN_DEPTH
     pred_depth[pred_depth > MAX_DEPTH] = MAX_DEPTH
-
+    
 
     ###########pred_depth is 1/disp
     #sup_Monodepth+PIXOR_one_over_disp
@@ -290,6 +299,7 @@ def forward_monodepth_model(imgL, color, depth, metric_log, depth_model, encoder
     pred_disp, _ = disp_to_depth(disp, min_depth, max_depth)
     pred_disp = F.interpolate(pred_disp, size=(imgL.shape[2], imgL.shape[3]), mode="bilinear", align_corners=False).squeeze(1)
     pred_depth = 1 / pred_disp.squeeze(1)
+    print(pred_depth.max())
     '''
     
     ###########pred_depth is 1/disp, 0.1~100 scale, clamp[0.001~80]  
@@ -320,10 +330,11 @@ def compute_reprojection_loss(target, pred):
     return reprojection_loss
 
 
-def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, iteration, mask):
+def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, depth, iteration, mask):
     """Predict poses between input frames for monocular sequences.
     """
-    color = norm_image_seq['color']# b*1*192*640
+    depth = depth.unsqueeze(1)
+    color = norm_image_seq['color']# b*3*192*640
     color_post = norm_image_seq['color_post']
     color_prev = norm_image_seq['color_prev']
     reprojection_losses = []
@@ -336,19 +347,18 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         """Generate the warped (reprojected) color images for a minibatch.
         Generated images are saved into the `outputs` dictionary.
         """
-        min_depth = 0.1  # while training
-        max_depth = 100
-        _, depth = disp_to_depth(disp, min_depth, max_depth) # b*1*192*640
-        depth = F.interpolate(depth, size=(mask.shape[1], mask.shape[2]), mode="bilinear", align_corners=False).squeeze(1)
+        #min_depth = 0.1  # while training
+        #max_depth = 100
+        #_, depth = disp_to_depth(disp, min_depth, max_depth) # b*1*192*640
+        #depth = F.interpolate(depth, size=(mask.shape[1], mask.shape[2]), mode="bilinear", align_corners=False).squeeze(1) # b*304*1248
         #depth *= MONO_SCALE_FACTOR
         #depth[depth < MIN_DEPTH] = MIN_DEPTH
         #depth[depth > MAX_DEPTH] = MAX_DEPTH
-
+        
         K = intrinsic.float()
         inv_K = torch.inverse(K)
-        import pdb; pdb.set_trace()
 
-        _, h, w = mask.shape 
+        _, h, w = mask.shape #b*304*1248
 
         backproject_depth = BackprojectDepth(inv_K.shape[0], h, w).cuda()
         project_3d = Project3D(inv_K.shape[0], h, w).cuda()
@@ -373,7 +383,7 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
 
     if iteration % 100 == 0:
         #save
-        save_depth = depth
+        save_depth = depth.clone().detach()
         savepath = osp.join(args.saverootpath, args.run_name)
         if not osp.exists(savepath):
             os.makedirs(savepath)
@@ -386,6 +396,7 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         save_image(images, osp.join(savepath, "images.png"),nrow= 6)
         warps = torch.cat((prev_warp_img, curr_image, post_warp_img), dim=0)    
         save_image(warps, osp.join(savepath, "warps.png"),nrow= 6)
+        mask = mask.clone().detach().unsqueeze(1)
         save_image(mask.int()*1.1, osp.join(savepath, "masks.png"),nrow= 6)
 
     #return (reprojection_losses[0].mean()+reprojection_losses[1].mean())/2
@@ -405,7 +416,8 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         loss += to_optimise[~mask].mean()
     else: 
         loss += to_optimise.mean()
-    mean_disp = disp.mean(2, True).mean(3, True)
+
+    mean_disp =  disp.mean(2, True)
     norm_disp = disp / (mean_disp + 1e-7)
     smooth_loss = get_smooth_loss(norm_disp, color)
     loss += 1e-3* smooth_loss
@@ -455,7 +467,7 @@ def train(args):
         calib_dir=args.eval_calib_dir,
         image_dir=args.eval_image_dir,
         root_dir=args.root_dir,
-         raw_dir = args.raw_dir, #crkim
+        raw_dir = args.raw_dir, #crkim
         only_feature=args.no_cal_loss,
         split=args.split,
         image_downscale=args.image_downscale,
@@ -653,18 +665,19 @@ def train(args):
             class_labels = batch['cl'].cuda()
             reg_labels = batch['rl'].cuda()
             depth_loss, depth_map, disp, mask = forward_monodepth_model(imgL, color, depth_map, train_metric, depth_decoder, encoder,mode='TRAIN')
-           
             if "D" == args.depth_loss:
                 depth_loss = depth_loss
             elif "M" == args.depth_loss:
                 norm_image_seq = {'color':color, 'color_post': color_post, 'color_prev':color_prev} #network input
                 image_seq = {'curr_image':curr_image, 'post_image':post_image, 'prev_image':prev_image} #warp image
-                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, iteration, mask)
+                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, depth_map, iteration, mask)
+                #reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, depth_map, iteration, mask)
                 depth_loss = reprojection_loss *10
             elif "MD" == args.depth_loss:
                 norm_image_seq = {'color':color, 'color_post': color_post, 'color_prev':color_prev} #network input
                 image_seq = {'curr_image':curr_image, 'post_image':post_image, 'prev_image':prev_image} #warp image
-                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, iteration, mask)
+                reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, depth_map, iteration, mask)
+                #reprojection_loss = forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, depth_map, iteration, mask)
                 depth_loss += reprojection_loss *10
 
             inputs = []
@@ -680,6 +693,7 @@ def train(args):
                 if torch.abs(a_shift[i]).item() > 1e-6:
                     roty = utils_func.roty_pth(a_shift[i]).cuda()
                     ptc = torch.mm(ptc, roty.t())
+
                 voxel = gen_feature_diffused_tensor(
                     ptc, 700, 800, grid_3D_extended, diffused=args.diffused)
                 if flip[i] > 0:

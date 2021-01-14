@@ -32,3 +32,5 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.c
 CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.cfg --root_dir ~/dataset/kitti_3d --pixor_pretrain ./pretrained_weights/pixor_checkpoint.pth.tar --depth_pretrain ./pretrained_weights/mono_640x192 --depth_loss D --run_name sup_Monodepth+PIXOR_one_over_disp_scale
 #train supervised model, pred_depth is 1/disp, 0.1~100 scale, clamp[0.001~80]  
 CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.cfg --root_dir ~/dataset/kitti_3d --pixor_pretrain ./pretrained_weights/pixor_checkpoint.pth.tar --depth_pretrain ./pretrained_weights/mono_640x192 --depth_loss D --run_name sup_Monodepth+PIXOR_one_over_disp_scale_clamp
+#train supervised model, pred_depth is log(exp(disp)+1), without sigmoid
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.cfg --root_dir ~/dataset/kitti_3d --pixor_pretrain ./pretrained_weights/pixor_checkpoint.pth.tar --depth_pretrain ./pretrained_weights/mono_640x192 --depth_loss D --run_name sup_Monodepth+PIXOR_log
