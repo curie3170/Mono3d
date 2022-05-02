@@ -3,7 +3,7 @@
 ## Installation
 ```bash
 # cloning the repo.
-git clone https://github.com/Uehwan/mono3d
+git clone https://github.com/curie3170/Mono3d.git
 cd mono3d
 
 # environment creation using conda
