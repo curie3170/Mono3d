@@ -43,7 +43,7 @@ class KittiDataset_Fusion_stereo(Dataset):
                  random_shift_scale=0,
                  aug_noise=0, reduce_points_rate=1.0,
                  root_dir="/scratch/datasets/KITTI/object",
-                 raw_dir = "/root/dataset/kitti_raw1", #crkim
+                 raw_dir = "/root/dataset/kitti_raw", #crkim
                  only_feature=False, split='training', image_downscale=1, crop_height=-1,
                  **kargs):
 

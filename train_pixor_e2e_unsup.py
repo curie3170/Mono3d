@@ -333,7 +333,7 @@ def compute_reprojection_loss(target, pred):
 def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_seq, image_seq, disp, depth, iteration, mask):
     """Predict poses between input frames for monocular sequences.
     """
-    #depth = depth.unsqueeze(1)
+    depth = depth.unsqueeze(1)
     color = norm_image_seq['color']# b*3*192*640
     color_post = norm_image_seq['color_post']
     color_prev = norm_image_seq['color_prev']
@@ -347,10 +347,12 @@ def forward_pose_model(args, intrinsic, pose_encoder, pose_decoder, norm_image_s
         """Generate the warped (reprojected) color images for a minibatch.
         Generated images are saved into the `outputs` dictionary.
         """
+
         min_depth = 0.1  # while training
         max_depth = 100
         _, depth = disp_to_depth(disp, min_depth, max_depth) # b*1*192*640
         depth = F.interpolate(depth, size=(mask.shape[1], mask.shape[2]), mode="bilinear", align_corners=False)
+        depth *= MONO_SCALE_FACTOR
         
         
         K = intrinsic.float()
