@@ -25,6 +25,7 @@ CUDA_VISIBLE_DEVICES=0,1 python train_pixor_e2e.py -c configs/fusion.cfg --depth
 ## Evaluation
 
 ## Performance
+![image](https://user-images.githubusercontent.com/17980462/177567548-2b7b1e78-ccba-430a-82e8-bd3d910832c4.png)
 
 ## License
 
