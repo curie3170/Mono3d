@@ -38,8 +38,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.c
 <p align="center"><img src="https://user-images.githubusercontent.com/17980462/177567814-3d6d8e33-0f80-4c3f-bf7d-8ea2cb1e4fa7.png"  width="50%"></p>
 <!-- <p align="center"><img src="https://user-images.githubusercontent.com/17980462/177567891-c3af00ca-e78c-431a-bf5d-f810bffbf245.png"  width="70%"></p> -->
 <p align="center"><img src="https://user-images.githubusercontent.com/17980462/177567548-2b7b1e78-ccba-430a-82e8-bd3d910832c4.png"  width="100%"></p>
+
 ## License
+This project partially depends on the sources of [Monodepth2](https://github.com/nianticlabs/monodepth2) and [PIXOR](https://github.com/philip-huang/PIXOR)
 
 ## Citation
-
-## Acknowledgement
