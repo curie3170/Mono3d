@@ -1,4 +1,10 @@
-# Mono3D
+# Self-supervised 3D Object Detection from Monocular Pseudo-LiDAR
+#### Curie Kim, Ue-Hwan Kim, Jong-Hwan Kim
+#### [Paper](https://arxiv.org/abs/2209.09486)
+
+## Abstract
+There have been attempts to detect 3D objects by fusion of stereo camera images and LiDAR sensor data or using LiDAR for pre-training and only monocular images for testing, but there have been less attempts to use only monocular image sequences due to low accuracy. In addition, when depth prediction using only monocular images, only scale-inconsistent depth can be predicted, which is the reason why researchers are reluctant to use monocular images alone. Therefore, we propose a method for predicting absolute depth and detecting 3D objects using only monocular image sequences by enabling end-to-end learning of detection networks and depth prediction networks. As a result, the proposed method surpasses other existing methods in performance on the KITTI 3D dataset. Even when monocular image and 3D LiDAR are used together during training in an attempt to improve performance, ours exhibit is the best performance compared to other methods using the same input. In addition, end-to-end learning not only improves depth prediction performance, but also enables absolute depth prediction, because our network utilizes the fact that the size of a 3D object such as a car is determined by the approximate size.
+
 <p align="center"><img src="https://user-images.githubusercontent.com/17980462/177569344-01ceb000-7bd2-42d8-bf40-18e4de48b850.png"  width="100%"></p>
 
 ## Installation
