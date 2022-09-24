@@ -1,5 +1,6 @@
 # Self-supervised 3D Object Detection from Monocular Pseudo-LiDAR
 #### Curie Kim, Ue-Hwan Kim, Jong-Hwan Kim
+#### Accepted to IEEE MFI 2022
 #### [Paper](https://arxiv.org/abs/2209.09486)
 
 ## Abstract
