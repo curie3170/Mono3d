@@ -44,3 +44,12 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python train_pixor_e2e_unsup.py -c configs/fusion.c
 This project partially depends on the sources of [Monodepth2](https://github.com/nianticlabs/monodepth2) and [PIXOR](https://github.com/philip-huang/PIXOR)
 
 ## Citation
+```
+@INPROCEEDINGS{9913846,  
+               author={Kim, Curie and Kim, Ue-Hwan and Kim, Jong-Hwan},  
+               booktitle={2022 IEEE International Conference on Multisensor Fusion and Integration for Intelligent Systems (MFI)},   
+               title={Self-supervised 3D Object Detection from Monocular Pseudo-LiDAR},   
+               year={2022}, 
+               pages={1-6},  
+               doi={10.1109/MFI55806.2022.9913846}}
+```
